@@ -1,48 +1,54 @@
 # Ultimate Chaos
+A responsive dark fantasy browser game built with React, TypeScript, Vite and Supabase.
 
-Fantasy-Duelle für Browser, iPhone und PC. Wähle aus sieben Figuren, spiele zehn Runden mit je fünf Sekunden Auswahlzeit und automatischen Kämpfen. Gegen den Chaos-Bot kannst du sofort allein spielen; Freunde treten über private Raumcodes oder Herausforderungen bei.
+## Play
+- Five lives in standard duels; ten seconds for each secret choice. Both players can confirm to resolve immediately. A round winner deals one damage to the opponent; draws deal no damage.
+- Eight campaign chapters with distinct opponents, adaptive strategies based only on previous rounds, and bosses with eight or eleven lives.
+- Endless Arena starts with ten lives. Enemy lives increase with the wave, while the player's remaining lives carry over.
+- Real rating-based matchmaking, private rooms, friend challenges, private chat and battle emotes.
+- A detailed character editor, individual seven-card loadouts, 97 cosmetic items, daily server-priced offers, four chest tiers, opening history and duplicate conversion.
+- Daily quests, permanent achievements and a private match journal. Old account balances and progression are retained; detailed journal statistics begin with the journal migration.
+- Music and effects have separate volume controls. Graphics always use High quality; reduced motion remains available.
+- Installable PWA with local app icons. Online match documents, API responses and authentication are never stored by the service worker. Offline navigation shows a connection screen.
 
-## Fortschritt und Chaos Coins
-- Sieg: 120 XP und 100 Chaos Coins.
-- Unentschieden: 60 XP, keine Coins.
-- Niederlage: 40 XP, keine Coins.
-- Ein Level benötigt 250 XP.
-- Neue Profile beginnen mit 0 Coins. Bereits vorhandene Guthaben bleiben bestehen.
-- Nur abgeschlossene Duelle mit mindestens einem eigenen Spielzug geben Belohnungen. Vollständig inaktive Spieler bekommen nichts.
-- Der Server verbucht Belohnungen pro Spieler und Match nur einmal. Bot-Spiele geben dieselben Belohnungen.
-- Coins kaufen ausschließlich kosmetische Rahmen; alle sieben Figuren sind jederzeit verfügbar.
+Cosmetics never change the seven-power rule matrix. Currency is earned in game, with no real-money purchases or cash-out.
 
-## Bot und Fairness
-Der Server legt die zufällige Bot-Figur vor deiner Auswahl fest. Sie liegt im privaten Datenbankschema und wird erst nach Ablauf der fünf Sekunden aufgedeckt. Änderungen deiner Auswahl beeinflussen den Bot nicht. Bot-Räume können von anderen Konten weder betreten noch gelesen werden. Das Rematch benötigt nur deine Zustimmung.
+## Development
+Use Node.js 24, then:
+```sh
+npm ci
+cp .env.example .env.local
+npm run dev
+```
+Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to the project's public client configuration. Never use an administrator or service-role key in a Vite variable.
 
-## Entwicklung
-Node.js 24 verwenden. `npm ci`, dann `npm run dev`. `npm run build` erstellt die Vite-Produktion in `dist/`; `npm test` führt 20 PostgreSQL-Integrationstests mit PGlite aus.
+```sh
+npm test
+npm run build
+```
+Database integration tests run the actual SQL using PGlite. Development-only visual fixtures are available at `/__visual` and `/__account`; migration inspection is at `/__migration`. These inspection routes are not included in production.
 
-Die Frontend-Variablen sind `VITE_SUPABASE_URL` und `VITE_SUPABASE_ANON_KEY`. Ausschließlich öffentliche Publishable-/Anon-Keys verwenden; niemals Service-Role-Schlüssel ins Frontend schreiben. Lokale Umgebungsdateien sind von Git und Deployments ausgeschlossen.
+## Database
+For a **fresh** database, run `supabase/setup-fresh.sql`; it aborts if the game is already installed. For an existing database, apply only the missing numbered migration files in order. Migration 002 is an optional scheduled cleanup and requires pg_cron.
 
-## Datenbank
-Für eine neue Installation `supabase/setup-fresh.sql` im Supabase SQL Editor ausführen. Das Skript bricht ab, wenn Spieltabellen bereits existieren. Bestehende Installationen aus Version 1 benötigen nur `supabase/migrations/005_bot_rewards.sql`; sie erhalten Bot-Duelle, die neuen Belohnungen und serverseitige Belohnungsbelege. Bestehende Konten, Profile und Guthaben bleiben erhalten.
+Private moves, inventories, purchase receipts, progress awards and journal records remain in the unexposed `chaos_private` schema. Client mutations use authenticated RPCs. Purchases, chest outcomes, game results, rewards and claims are decided and committed on the server, with locks and unique receipts.
 
-E-Mailbestätigung ist erforderlich. Supabase Site URL und Redirect URLs müssen die endgültige App-Adresse zulassen. Das private Schema `chaos_private` darf nicht über die Data API exponiert werden. Profile, Freunde, Herausforderungen und Räume werden mit RLS geschützt; die neuen Bot-Funktionen prüfen die Identität serverseitig.
+The `tests/live-*-smoke.sql` scripts use generated temporary accounts and roll back their changes. Full auth, mail delivery and device testing require separate real test accounts; local SQL tests are not a substitute for those checks.
 
-## Gestaltung und Audio
-Die Oberfläche verwendet selbst gehostete Cinzel- und Manrope-Schriften (OFL-Lizenzen in `public/fonts/`), bestehende Figurenbilder und einen neu generierten Arena-Hintergrund. Details und Bildprompt: `ARTWORK.md`. Effekte, Auswahl-, Ergebnis- und Level-Sounds werden lokal mit Web Audio erzeugt. Stummschaltung und reduzierte Bewegung sind verfügbar; die Arena respektiert die Systemeinstellung für reduzierte Animationen.
+## Deployment
+The repository contains the app in `ultimate-chaos-source`. In Vercel use:
+- Root Directory: `ultimate-chaos-source`
+- Framework: Vite
+- Install: `npm ci`
+- Build: `npm run build`
+- Output: `dist`
+- Node.js: 24.x
 
-## Prüfung
-Die automatisierten Tests prüfen Spielregeln, Geheimhaltung, Zeitfenster, zehn Runden, Rematches, Authentifizierung, RLS, Freunde, Inventar, Bot-Verhalten und einmalige Belohnungen. Responsive Ansichten werden bei 320, 390, 768 und 1440 Pixeln geprüft. Ein realer Zwei-Geräte-Test ist zusätzlich sinnvoll.
+Connect the GitHub repository and use `main` as the production branch. Configure the two public Supabase client variables in Vercel and add the final URL to Supabase Auth's site/redirect settings.
 
+## Artwork
+All game art, music and fonts are served locally. Original generated image prompts and source paths are documented in [ARTWORK.md](ARTWORK.md). The crest, character layers and effects extend the project's native SVG/CSS artwork. Font license files are in `public/fonts`.
 
-## Kampagne, Charaktere und Inventar
-Die Migrationen `006_character_atelier.sql` und `007_campaign_packs.sql` nach 005 einmalig ausführen. Für neue Installationen enthält `setup-fresh.sql` alle Änderungen. Migration 006 ist auf der Live-Datenbank bereits eingerichtet.
+Round stakes use only free, nontransferable, nonredeemable game coins. The stake phase lasts ten seconds before each participating round; both ready ends it early. The server reserves the stake, pays 2× on a deliberate round win, refunds draws/abandonment/inactivity and caps stakes by level and daily profit.
 
-Der Charakter ersetzt die Helden-Profilbilder. Körper, Haut, acht Frisuren, freie Haar-/Augenfarben, Gesicht, Brauen, Bart und Basis-Kleidungsfarbe sind kostenlos. Looks werden im Konto gespeichert und nur Match-Teilnehmern sowie bestätigten Freunden gezeigt. Im Kampf stehen die eigenen Trainer am Spielfeldrand.
-
-Acht Kampagnengegner mit eigenen Looks. Spätere Gegner sagen Züge aus abgeschlossenen Runden voraus; die aktuelle Auswahl wird niemals gelesen. Seraphine: 14 Runden, mindestens 8 Siege. Veyr: 18 Runden, mindestens 11 Siege. Belohnungen steigen von 120 XP / 100 Coins bis 600 XP / 600 Coins bei Sieg. Verluste bringen XP, keine Match-Coins. Siege öffnen das nächste Kapitel.
-
-17 Styles in fünf Slots: Kleidung, Kopfbedeckung, Aura, Rahmen und Karten-Designs. Anprobe verändert die Ausrüstung nicht. Preise, Besitz, Käufe und Kampagnenfortschritt sind serverseitig geprüft. Keine Echtgeldkäufe oder Kampfboni.
-
-Mystery Packs: pro Levelaufstieg ein Sternenfund; drei kaufbare Packstufen für 150, 400 oder 900 erspielte Coins. Die im UI sichtbaren Chancen stimmen mit dem Server überein. Ein Pack enthält entweder nichts, Coins oder einen Style. Doppelte Styles werden mit einer Animation in 20% ihres Shoppreises als Coins umgewandelt. Anfragen mit gleicher ID erzeugen keine zweite Abbuchung oder Belohnung. Inventar zeigt Styles und Packs.
-
-Match-Fläche und Auswahlkarten behalten ihre Position während Auswahl, Enthüllung und Ergebnis. Level, XP-Ring und Coins erscheinen im Account- und Match-Header. Die lokale Testseite `/__visual` ist nur im Entwicklungsmodus aktiv und aus dem Produktionsbuild entfernt.
-
-30 Integrationstests: `npm test`. Build: `npm run build`.
+Emote loadouts hold five different free or owned reactions. Five are included; additional illustrated emotes are cosmetic shop or mystery-pack rewards.

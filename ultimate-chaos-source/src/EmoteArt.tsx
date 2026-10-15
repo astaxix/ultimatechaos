@@ -1,0 +1,19 @@
+import {cosmetic} from './cosmetics';
+export const freeEmotes=['gg','luck','wave','thanks','oops'];
+export const emoteName=(id:string)=>cosmetic(id)?.name??({gg:'GG',luck:'Viel Glück',wave:'Hallo!',thanks:'Danke!',oops:'Ups!'}[id]??id);
+export function EmoteArt({id}:{id:string}){const m=cosmetic(id)?.model??id,c=cosmetic(id)?.color??'#dec78f';return <span className={'emote-glyph emote-'+m} style={{color:c}} aria-label={emoteName(id)}><svg viewBox="0 0 100 100" aria-hidden="true"><path d="M50 4L86 20 96 52 79 84 50 96 18 82 4 50 20 18Z" fill="#111e30" stroke={c} strokeOpacity=".45"/><circle cx="50" cy="49" r="34" fill={c} fillOpacity=".07"/><g fill="none" stroke={c} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+{m==='gg'?<><path d="M43 31H28V59H44V45H37M74 31H59V59H75V45H68"/><path d="M31 70L50 77 70 69" strokeWidth="1.5"/></>:
+m==='luck'?<><path d="M50 48C21 45 22 20 39 25Q50 27 50 39C47 10 77 17 72 34Q70 47 57 48C88 43 87 72 68 70Q56 68 53 56C55 84 28 84 28 65Q29 52 45 51Z" fill={c} fillOpacity=".65"/><path d="M51 50Q59 74 49 83"/></>:
+m==='wave'||m==='greeting'?<><path d="M31 66L24 48Q23 40 29 43L37 53 32 26Q32 20 37 23L44 46 43 18Q44 12 48 19L51 44 55 21Q57 16 60 22L59 46 65 31Q69 26 71 32L65 65Q58 81 43 77Z" fill={c} fillOpacity=".22"/><path d="M18 28L12 20M23 19L21 11M78 40L85 35"/></>:
+m==='thanks'||m==='heart'?<><path d="M50 70L25 48C9 24 40 13 50 33C65 9 92 30 76 49Z" fill={c} fillOpacity=".6"/><path d="M36 31Q27 27 26 39" stroke="white" strokeOpacity=".5"/>{m==='thanks'&&<path d="M26 77H75"/>}</>:
+m==='oops'||m==='mind'?<><circle cx="50" cy="49" r="25" fill={c} fillOpacity=".2"/><circle cx="39" cy="45" r="3" fill={c}/><circle cx="60" cy="45" r="3" fill={c}/><ellipse cx="50" cy="62" rx="6" ry="8"/>{m==='mind'&&<path d="M25 28L19 16 35 21 44 8 52 20 69 9 69 25 83 21M17 52L9 56M83 50L91 57"/>}</>:
+m==='clown'?<><circle cx="50" cy="48" r="25" fill="#f0e0c7" stroke="none"/><path d="M28 33Q8 23 17 48M73 33Q93 23 83 48" stroke="#db7b7e" strokeWidth="10"/><path d="M36 37L42 43 33 45M64 37L58 43 67 45" fill="#6d9ab6"/><circle cx="50" cy="50" r="7" fill="#e87575" stroke="none"/><path d="M36 61Q50 78 65 61" stroke="#d56471" strokeWidth="5"/></>:
+m==='salt'?<><path d="M39 27L62 33 58 41 35 35Z" fill={c}/><path d="M36 36L61 42 66 74 27 64Z" fill={c} fillOpacity=".3"/><path d="M43 28L45 22M52 30L54 24M61 32L63 26M39 53L54 57M75 21L77 23M70 31L72 33M83 30L85 32"/></>:
+m==='coffee'||m==='toast'?<><path d="M25 39H66V64Q47 82 29 65Z" fill={c} fillOpacity=".3"/><path d="M66 42Q88 37 79 55L67 59M24 79H76M36 29Q29 22 37 14M51 30Q44 21 52 13"/>{m==='toast'&&<path d="M72 21L79 13M78 27L88 24"/>}</>:
+m==='cool'?<><circle cx="50" cy="49" r="27" fill={c} fillOpacity=".25"/><path d="M25 38H47L44 51H30ZM53 38H75L70 51H56Z" fill="#142335"/><path d="M46 41H54M39 64Q53 70 64 57"/></>:
+m==='sleep'?<><circle cx="43" cy="56" r="23" fill={c} fillOpacity=".25"/><path d="M27 52Q33 58 39 52M47 52Q53 58 59 52M38 68H46M65 20H78L65 32H79M77 43H87L77 52H88"/></>:
+m==='rage'?<><circle cx="50" cy="51" r="27" fill={c} fillOpacity=".3"/><path d="M32 38L43 45M67 38L57 45M34 64Q50 54 66 64M25 16L23 29M16 21L30 24M76 16L73 28M67 20L83 24"/><circle cx="38" cy="49" r="2" fill={c}/><circle cx="62" cy="49" r="2" fill={c}/></>:
+m==='mic'?<><path d="M50 53L34 80 27 75 43 48Z" fill={c}/><ellipse cx="56" cy="37" rx="15" ry="19" transform="rotate(30 56 37)" fill={c} fillOpacity=".4"/><path d="M49 23L68 34M43 31L64 44M74 69L81 75M70 79L73 86M84 60L92 62"/></>:
+m==='crown'?<path d="M22 64L17 31 37 47 50 22 63 47 83 31 77 64ZM27 74H74" fill={c} fillOpacity=".25"/>:
+<><circle cx="50" cy="48" r="27" fill={c} fillOpacity=".2"/><path d="M32 39L39 33 45 39M57 39L64 33 71 39M29 51Q50 85 73 51Z" fill={c} fillOpacity=".45"/><path d="M21 47Q8 55 20 65M79 47Q92 55 80 65" stroke="#8bbcdf"/></>}
+</g></svg></span>;}

@@ -868,5 +868,105 @@
     "color": "#dfb0ef",
     "model": "nova",
     "description": "Prismensupernova — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus."
+  },
+  {
+    "id": "emote-salt",
+    "name": "Salzstreuer",
+    "slot": "emote",
+    "model": "salt",
+    "price": 220,
+    "rarity": 0,
+    "color": "#b9d6ea",
+    "description": "Eine Prise Salz fürs Chaos."
+  },
+  {
+    "id": "emote-clown",
+    "name": "Zirkusreif",
+    "slot": "emote",
+    "model": "clown",
+    "price": 350,
+    "rarity": 1,
+    "color": "#eda5aa",
+    "description": "Die Manege ist eröffnet."
+  },
+  {
+    "id": "emote-coffee",
+    "name": "Erst mal Kaffee",
+    "slot": "emote",
+    "model": "coffee",
+    "price": 180,
+    "rarity": 0,
+    "color": "#dbbc91",
+    "description": "Ganz entspannt. Du bist noch am Aufwärmen."
+  },
+  {
+    "id": "emote-cool",
+    "name": "Zu cool",
+    "slot": "emote",
+    "model": "cool",
+    "price": 500,
+    "rarity": 2,
+    "color": "#8fd7d4",
+    "description": "Sonnenbrille auf, Chaos an."
+  },
+  {
+    "id": "emote-sleep",
+    "name": "Schon fertig?",
+    "slot": "emote",
+    "model": "sleep",
+    "price": 300,
+    "rarity": 1,
+    "color": "#a6b8e9",
+    "description": "Ein kleines Nickerchen zwischen zwei Zügen."
+  },
+  {
+    "id": "emote-rage",
+    "name": "Kurz vorm Ausrasten",
+    "slot": "emote",
+    "model": "rage",
+    "price": 600,
+    "rarity": 2,
+    "color": "#eda882",
+    "description": "Wenn selbst die Arena kurz die Luft anhält."
+  },
+  {
+    "id": "emote-love",
+    "name": "Chaos mit Herz",
+    "slot": "emote",
+    "model": "heart",
+    "price": 220,
+    "rarity": 0,
+    "color": "#e9a8c2",
+    "description": "Ein Herz für gute Gegner."
+  },
+  {
+    "id": "emote-toast",
+    "name": "Auf dich!",
+    "slot": "emote",
+    "model": "toast",
+    "price": 400,
+    "rarity": 1,
+    "color": "#e6ca93",
+    "description": "Ein Toast auf dieses völlig normale Duell."
+  },
+  {
+    "id": "emote-mind",
+    "name": "Gehirn explodiert",
+    "slot": "emote",
+    "model": "mind",
+    "price": 900,
+    "rarity": 3,
+    "color": "#cdb3ee",
+    "description": "Wenn der nächste Zug alle Dimensionen sprengt."
+  },
+  {
+    "id": "emote-mic",
+    "name": "Mic Drop",
+    "slot": "emote",
+    "model": "mic",
+    "price": 1500,
+    "rarity": 4,
+    "color": "#eccb8f",
+    "description": "Das letzte Wort fällt auf den Arenaboden."
   }
 ]

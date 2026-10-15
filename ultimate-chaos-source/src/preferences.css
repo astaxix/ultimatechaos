@@ -3,3 +3,13 @@ html[data-graphics=low] .cosmos .stars,html[data-graphics=low] .orb,html[data-gr
 @media(max-width:600px){.settings-panel{padding:52px 20px 24px;max-height:100dvh;border-radius:0;min-height:100dvh}.settings-backdrop{padding:0}.graphics-options{grid-template-columns:repeat(2,minmax(0,1fr))}.header-player-name{max-width:64px;font-size:11px}.account-header .header-right{gap:6px}.account-header .account-brand small{display:none}.account-header .header-right>.sound-control{display:none}}
 
 .graphics-fixed{font-size:12px;color:#e4c98d;border:1px solid #d9b77955;border-radius:8px;padding:9px 16px}
+
+.install-game{display:flex;align-items:center;gap:16px;border:1px solid #d6c18a30;border-radius:12px;background:#142235;padding:18px 20px;margin:22px 0}.install-game>svg{color:#d7be87;flex-shrink:0}.install-game>div{flex:1;min-width:0}.install-game b{font-size:13px;font-weight:500;color:#e1dac5}.install-game p{font-size:11px;color:#99abc1;line-height:1.7;margin:6px 0 0}.install-game .text-btn{font-size:11px;min-height:44px}.install-instructions{display:flex;gap:6px;align-items:center}@media(max-width:600px){.install-game{padding:14px;gap:10px;flex-wrap:wrap}.install-game>div{flex-basis:calc(100% - 40px)}.install-game .text-btn{margin-left:auto}.install-game>svg{width:20px}}
+
+.route-loading{display:flex;align-items:center;justify-content:center;gap:12px;min-height:250px;color:#adbed0;font-size:13px}
+.qa-banner{margin:0;padding:7px 12px;background:#172439;color:#c1cbd7;font-size:10px;line-height:1.5}
+@media(max-width:600px){.has-profile .account-header{height:64px;padding:0 10px}.has-profile .account-brand{display:none}.has-profile .header-right{width:100%;justify-content:space-between;gap:6px}.has-profile .header-profile{display:flex!important;order:-2;width:auto;height:40px;padding:0;gap:6px;flex-shrink:1;min-width:0}.has-profile .header-profile .profile-avatar{width:28px;height:28px;flex-shrink:0}.has-profile .header-player-name{display:block;max-width:64px;font-size:10px;text-align:left;color:#d4dfeb}.has-profile .header-right .progress-wallet{order:-1;flex-shrink:0}.has-profile .account-header button[aria-label=Abmelden]{display:none}.has-profile .header-right>.icon-btn{flex-shrink:0}.has-profile .header-right .social-dock{flex-shrink:0}}
+
+/* Source-space SVG cells preserve artwork proportions in every card slot. */
+.original-card-svg{display:block;width:100%;height:100%;overflow:hidden}
+@media(max-width:900px){.hub-sidebar{grid-template-columns:repeat(5,minmax(0,1fr))!important}.hub-sidebar>button{min-width:0}.hub-sidebar>button span{font-size:10px}}

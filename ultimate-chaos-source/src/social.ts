@@ -1,5 +1,5 @@
 import {supabase,rpcMessage} from './backend';
-export type Profile={id:string;name:string;friend_code:string;avatar:number;frame:string;xp:number;coins:number;matches:number;wins:number;last_seen:string;appearance?:import('./appearance').Look;endless_best?:number;rating?:number;ranked_matches?:number;ranked_wins?:number;campaign_unlocked?:number;card_skin?:string;card_loadouts?:import('./cosmetics').CardLoadouts};
+export type Profile={emote_loadout?:string[];id:string;name:string;friend_code:string;avatar:number;frame:string;xp:number;coins:number;matches:number;wins:number;last_seen:string;appearance?:import('./appearance').Look;endless_best?:number;rating?:number;ranked_matches?:number;ranked_wins?:number;campaign_unlocked?:number;card_skin?:string;card_loadouts?:import('./cosmetics').CardLoadouts};
 export type Friend={id:string;status:'pending'|'accepted';incoming:boolean;profile:Pick<Profile,'id'|'name'|'avatar'|'frame'|'xp'|'last_seen'|'appearance'>};
 export type Challenge={id:string;incoming:boolean;name:string;status:'pending'|'accepted';room_code:string;expires_at:string};
 export type Loot={kind:'empty'|'coins'|'item'|'duplicate'|'purchased';tier:number;rarity?:number;coins?:number;item?:string};

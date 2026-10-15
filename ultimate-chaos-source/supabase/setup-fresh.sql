@@ -1,10 +1,7 @@
--- ULTIMATE CHAOS: run only on a fresh Supabase project in SQL Editor.
--- All schema changes commit together. Existing game installations are protected.
+-- ULTIMATE CHAOS: fresh projects only. Existing installations use individual migrations.
 begin;
 do $$ begin
- if to_regclass('public.chaos_rooms') is not null then
-  raise exception 'Game already installed. Apply only missing individual migrations.';
- end if;
+ if to_regclass('public.chaos_rooms') is not null then raise exception 'Game already installed. Apply only missing individual migrations.';end if;
 end $$;
 
 -- 001_game.sql
@@ -499,16 +496,1404 @@ revoke all on function public.chaos_social(text,text,integer,text,uuid,text) fro
 grant execute on function public.chaos_social(text,text,integer,text,uuid,text) to authenticated;
 
 
--- 002_cleanup.sql
--- Run after 001. Enable pg_cron in Supabase Database > Extensions first.
-create extension if not exists pg_cron;
-create function chaos_private.cleanup() returns void
-language sql security definer set search_path='' as $$
- delete from public.chaos_rooms where updated_at<now()-interval '24 hours';
- delete from chaos_private.limits where coalesce(created,joined,'epoch'::timestamptz)<now()-interval '7 days';
-$$;
-revoke all on function chaos_private.cleanup() from public,anon,authenticated;
-select cron.schedule('chaos-cleanup','*/15 * * * *','select chaos_private.cleanup()');
+-- 005_bot_rewards.sql
 
+alter table public.chaos_rooms add column if not exists is_bot boolean not null default false;
+alter table public.chaos_profiles alter column coins set default 0;
+
+create or replace function chaos_private.reward_match() returns trigger
+language plpgsql security definer set search_path='' as $$
+declare p uuid; inserted integer; coin_reward integer; xp_reward integer;
+begin
+ if new.phase='finished' and (old.phase is distinct from new.phase or old.match_no<>new.match_no) then
+  for p in select id from (select new.host as id union select new.guest as id where not new.is_bot) players order by id loop
+   -- A completed match with at least one move earns XP. AFK sessions earn nothing.
+   if p is not null and exists(select 1 from chaos_private.moves where room_id=new.id and match_no=new.match_no and player=p) then
+    insert into chaos_private.rewards values(new.id,new.match_no,p) on conflict do nothing;
+    get diagnostics inserted=row_count;
+    if inserted=1 then
+     coin_reward:=case when new.match_winner=p then 100 else 0 end;
+     xp_reward:=case when new.match_winner=p then 120 when new.match_winner is null then 60 else 40 end;
+     update public.chaos_profiles set coins=coins+coin_reward,xp=xp+xp_reward,matches=matches+1,wins=wins+case when new.match_winner=p then 1 else 0 end where id=p;
+    end if;
+   end if;
+  end loop;
+ end if;
+ return new;
+end;
+$$;
+revoke all on function chaos_private.reward_match() from public,anon,authenticated;
+
+create or replace function public.chaos_action(action text,room_code text default null,player_name text default null,choice integer default null,expected_round integer default null,expected_match integer default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid(); p public.chaos_profiles; r public.chaos_rooms; d jsonb; reserved uuid; bot_move integer;
+begin
+ select * into p from public.chaos_profiles where id=u;
+ if p.id is null then raise exception 'Bitte zuerst dein Profil einrichten'; end if;
+ if action='bot' then
+  d:=chaos_private.play('create',null,p.name,null,null,null);
+  select * into r from public.chaos_rooms where id=(d->'room'->>'id')::uuid for update;
+  update public.chaos_rooms set is_bot=true,guest=gen_random_uuid(),guest_name='Chaos-Bot',guest_seen=clock_timestamp(),phase='select',select_until=clock_timestamp()+interval '5 seconds',guest_locked=true,updated_at=clock_timestamp() where id=r.id returning * into r;
+  -- Commit the random bot move before the player receives the selection screen.
+  insert into chaos_private.moves values(r.id,r.match_no,r.round_no,r.guest,floor(random()*7)::integer);
+  return chaos_private.play('state',r.code,p.name,null,null,null);
+ end if;
+ select * into r from public.chaos_rooms where code=upper(trim(room_code)) for update;
+ if action='join' then
+  reserved:=r.reserved_guest;
+  if r.is_bot and u<>r.host then raise exception 'Dies ist ein Duell gegen den Bot'; end if;
+  if reserved is not null and reserved<>u and u<>r.host then raise exception 'Dieser Raum ist für einen herausgeforderten Freund reserviert'; end if;
+ end if;
+ if r.is_bot then
+  if u<>r.host then raise exception 'Kein Zugriff auf dieses Bot-Duell'; end if;
+  update public.chaos_rooms set guest_seen=clock_timestamp(),guest_ready=case when action='ready' then true else guest_ready end where id=r.id and (guest_seen<clock_timestamp()-interval '20 seconds' or (action='ready' and not guest_ready));
+ end if;
+ d:=chaos_private.play(action,room_code,p.name,choice,expected_round,expected_match);
+ if d->>'left'='true' then return d; end if;
+ if r.is_bot then
+  select * into r from public.chaos_rooms where id=r.id;
+  if r.phase='select' then
+   -- Repeated reads cannot replace the precommitted choice. No client choice is read.
+   bot_move:=floor(random()*7)::integer;
+   insert into chaos_private.moves values(r.id,r.match_no,r.round_no,r.guest,bot_move) on conflict do nothing;
+   update public.chaos_rooms set guest_locked=true where id=r.id and not guest_locked;
+   select * into r from public.chaos_rooms where id=r.id;
+  end if;
+  d:=jsonb_set(d,'{room}',to_jsonb(r));
+ end if;
+ if d->'room'->>'phase'='finished' and exists(select 1 from chaos_private.rewards where room_id=(d->'room'->>'id')::uuid and match_no=(d->'room'->>'match_no')::integer and player=u) then
+  d:=d||jsonb_build_object('rewards',jsonb_build_object('xp',case when d->'room'->>'match_winner'=u::text then 120 when d->'room'->>'match_winner' is null then 60 else 40 end,'coins',case when d->'room'->>'match_winner'=u::text then 100 else 0 end,'total_xp',(select xp from public.chaos_profiles where id=u)));
+ end if;
+ return d;
+end;
+$$;
+revoke all on function public.chaos_action(text,text,text,integer,integer,integer) from public,anon;
+grant execute on function public.chaos_action(text,text,text,integer,integer,integer) to authenticated;
+
+
+-- 006_character_atelier.sql
+
+alter table public.chaos_profiles add column if not exists appearance jsonb not null default '{"body":"masculine","skin":"#dba77d","hair":"swept","hairColor":"#30251f","eyes":"#63b5bd","face":"soft","brows":"natural","beard":"none","outfitColor":"#344761","outfit":"starter","hat":"none","aura":"none"}';
+alter table chaos_private.inventory drop constraint if exists inventory_item_check;
+create table if not exists chaos_private.styles(id text primary key,slot text not null check(slot in ('outfit','hat','aura','frame')),price integer not null check(price>0));
+insert into chaos_private.styles values
+ ('coat-nocturne','outfit',450),('armor-solstice','outfit',900),('jacket-street','outfit',250),('robe-astral','outfit',550),
+ ('hat-beanie','hat',150),('hat-crown','hat',650),('hat-cap','hat',200),('hat-halo','hat',400),
+ ('aura-ember','aura',500),('aura-frost','aura',500),('aura-void','aura',1000),
+ ('violet','frame',150),('gold','frame',350),('celestial','frame',700) on conflict(id) do nothing;
+revoke all on chaos_private.styles from public,anon,authenticated;
+alter table chaos_private.inventory add constraint inventory_style_fk foreign key(item) references chaos_private.styles(id);
+
+-- Keep the proven social engine and enrich only already-authorized friend records.
+alter function public.chaos_social(text,text,integer,text,uuid,text) rename to chaos_social_v4;
+alter function public.chaos_social_v4(text,text,integer,text,uuid,text) set schema chaos_private;
+do $$begin execute replace(pg_get_functiondef('chaos_private.chaos_social_v4(text,text,integer,text,uuid,text)'::regprocedure),'chaos_social.friend_code','chaos_social_v4.friend_code');end;$$;
+revoke all on function chaos_private.chaos_social_v4(text,text,integer,text,uuid,text) from public,anon,authenticated;
+create function public.chaos_social(action text,display_name text default null,avatar_id integer default null,friend_code text default null,target_id uuid default null,item_id text default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare d jsonb;
+begin
+ d:=chaos_private.chaos_social_v4(action,display_name,avatar_id,friend_code,target_id,item_id);
+ return jsonb_set(d,'{friends}',coalesce((select jsonb_agg(jsonb_set(f,'{profile,appearance}',p.appearance)) from jsonb_array_elements(d->'friends') f join public.chaos_profiles p on p.id=(f->'profile'->>'id')::uuid),'[]'::jsonb));
+end;
+$$;
+revoke all on function public.chaos_social(text,text,integer,text,uuid,text) from public,anon;
+grant execute on function public.chaos_social(text,text,integer,text,uuid,text) to authenticated;
+
+create function public.chaos_style(action text,appearance jsonb default null,item_id text default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();p public.chaos_profiles;s chaos_private.styles;k text;v text;normalized jsonb;slot_name text;
+begin
+ select * into p from public.chaos_profiles where id=u for update;
+ if p.id is null then raise exception 'Bitte zuerst dein Profil einrichten'; end if;
+ if action='appearance' then
+  if appearance is null or jsonb_typeof(appearance)<>'object' or octet_length(appearance::text)>2048 then raise exception 'Aussehen ungültig'; end if;
+  normalized:=p.appearance;
+  for k,v in select key,value from jsonb_each_text(appearance) loop
+   if k in ('skin','hairColor','eyes','outfitColor') then
+    if v is null or v !~ '^#[a-fA-F0-9]{6}$' then raise exception 'Farbe ungültig'; end if;
+   elsif k='body' then
+    if v is null or v not in ('masculine','feminine','androgynous') then raise exception 'Körper ungültig'; end if;
+   elsif k='hair' then
+    if v is null or v not in ('swept','crop','curls','long','bob','braids','bun','bald') then raise exception 'Frisur ungültig'; end if;
+   elsif k='face' then
+    if v is null or v not in ('soft','angular','round') then raise exception 'Gesicht ungültig'; end if;
+   elsif k='brows' then
+    if v is null or v not in ('natural','bold') then raise exception 'Augenbrauen ungültig'; end if;
+   elsif k='beard' then
+    if v is null or v not in ('none','stubble','full') then raise exception 'Bart ungültig'; end if;
+   elsif k in ('outfit','hat','aura') then
+    -- Appearance editing cannot grant or equip paid cosmetics.
+    if v is distinct from p.appearance->>k then raise exception 'Styles bitte über die Sammlung ausrüsten'; end if;
+   else raise exception 'Unbekannte Aussehensoption'; end if;
+   normalized:=jsonb_set(normalized,array[k],to_jsonb(v));
+  end loop;
+  update public.chaos_profiles set appearance=normalized where id=u;
+ elsif action='buy' then
+  select * into s from chaos_private.styles where id=item_id;
+  if s.id is null then raise exception 'Shopartikel nicht gefunden'; end if;
+  if exists(select 1 from chaos_private.inventory where player=u and item=item_id) then raise exception 'Artikel gehört dir bereits'; end if;
+  if p.coins<s.price then raise exception 'Nicht genügend Coins'; end if;
+  insert into chaos_private.inventory values(u,item_id);
+  update public.chaos_profiles set coins=coins-s.price where id=u;
+ elsif action='equip' then
+  if item_id in ('outfit:reset','hat:reset','aura:reset') then
+   slot_name:=split_part(item_id,':',1);
+   update public.chaos_profiles set appearance=jsonb_set(public.chaos_profiles.appearance,array[slot_name],to_jsonb(case when slot_name='outfit' then 'starter' else 'none' end)) where id=u;
+  elsif item_id='basic' then update public.chaos_profiles set frame='basic' where id=u;
+  else
+   select * into s from chaos_private.styles where id=item_id;
+   if s.id is null or not exists(select 1 from chaos_private.inventory where player=u and item=item_id) then raise exception 'Diesen Style besitzt du nicht'; end if;
+   if s.slot='frame' then update public.chaos_profiles set frame=s.id where id=u;
+   else update public.chaos_profiles set appearance=jsonb_set(public.chaos_profiles.appearance,array[s.slot],to_jsonb(s.id)) where id=u; end if;
+  end if;
+ elsif action<>'state' then raise exception 'Ungültige Aktion'; end if;
+ return public.chaos_social('state');
+end;
+$$;
+revoke all on function public.chaos_style(text,jsonb,text) from public,anon;
+grant execute on function public.chaos_style(text,jsonb,text) to authenticated;
+
+alter function public.chaos_action(text,text,text,integer,integer,integer) rename to chaos_action_v5;
+alter function public.chaos_action_v5(text,text,text,integer,integer,integer) set schema chaos_private;
+revoke all on function chaos_private.chaos_action_v5(text,text,text,integer,integer,integer) from public,anon,authenticated;
+create function public.chaos_action(action text,room_code text default null,player_name text default null,choice integer default null,expected_round integer default null,expected_match integer default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare d jsonb;h public.chaos_profiles;g public.chaos_profiles;u uuid:=chaos_private.account_uid();
+begin
+ d:=chaos_private.chaos_action_v5(action,room_code,player_name,choice,expected_round,expected_match);
+ if d->>'left'='true' or d->'room' is null then return d; end if;
+ select * into h from public.chaos_profiles where id=(d->'room'->>'host')::uuid;
+ select * into g from public.chaos_profiles where id=(d->'room'->>'guest')::uuid;
+ return d||jsonb_build_object('players',jsonb_build_object('host',jsonb_build_object('appearance',h.appearance,'frame',h.frame,'xp',h.xp),'guest',jsonb_build_object('appearance',g.appearance,'frame',g.frame,'xp',g.xp)),
+  'wallet',(select jsonb_build_object('xp',xp,'coins',coins) from public.chaos_profiles where id=u));
+end;
+$$;
+revoke all on function public.chaos_action(text,text,text,integer,integer,integer) from public,anon;
+grant execute on function public.chaos_action(text,text,text,integer,integer,integer) to authenticated;
+
+
+-- 007_campaign_packs.sql
+
+alter table public.chaos_profiles add column campaign_unlocked integer not null default 0 check(campaign_unlocked between 0 and 8);
+alter table public.chaos_profiles add column card_skin text not null default 'classic';
+alter table public.chaos_rooms add column campaign_stage integer check(campaign_stage between 0 and 7);
+alter table public.chaos_rooms add column round_limit integer not null default 10 check(round_limit between 10 and 18);
+alter table public.chaos_rooms add column required_wins integer not null default 0 check(required_wins between 0 and 18);
+alter table public.chaos_rooms add column reward_xp integer not null default 120;
+alter table public.chaos_rooms add column reward_coins integer not null default 100;
+alter table public.chaos_rooms drop constraint chaos_rooms_host_score_check;
+alter table public.chaos_rooms drop constraint chaos_rooms_guest_score_check;
+alter table public.chaos_rooms add check(host_score between 0 and 18);
+alter table public.chaos_rooms add check(guest_score between 0 and 18);
+alter table chaos_private.styles drop constraint styles_slot_check;
+alter table chaos_private.styles add check(slot in ('outfit','hat','aura','frame','card'));
+alter table chaos_private.styles add column rarity integer not null default 1 check(rarity between 1 and 3);
+update chaos_private.styles set rarity=case when id in ('armor-solstice','hat-crown','aura-void','celestial') then 3 when id in ('coat-nocturne','robe-astral','hat-halo','aura-ember','aura-frost','gold') then 2 else 1 end;
+insert into chaos_private.styles values('card-frost','card',350,1),('card-ember','card',650,2),('card-eclipse','card',1000,3);
+create table chaos_private.packs(player uuid not null references public.chaos_profiles on delete cascade,tier integer not null check(tier between 0 and 2),quantity integer not null default 0 check(quantity>=0),primary key(player,tier));
+create table chaos_private.loot_receipts(id uuid primary key,player uuid not null references public.chaos_profiles on delete cascade,action text not null,tier integer not null,reward jsonb not null,created_at timestamptz not null default clock_timestamp());
+revoke all on chaos_private.packs,chaos_private.loot_receipts from public,anon,authenticated;
+insert into chaos_private.packs select id,0,xp/250 from public.chaos_profiles where xp>=250;
+create function chaos_private.level_packs() returns trigger language plpgsql security definer set search_path='' as $$
+begin
+ if new.xp/250>old.xp/250 then insert into chaos_private.packs values(new.id,0,new.xp/250-old.xp/250) on conflict(player,tier) do update set quantity=chaos_private.packs.quantity+excluded.quantity;end if;
+ return new;
+end;$$;
+revoke all on function chaos_private.level_packs() from public,anon,authenticated;
+create trigger grant_level_packs after update of xp on public.chaos_profiles for each row execute function chaos_private.level_packs();
+
+-- Existing game rules, with immutable per-room campaign round limits and boss objectives.
+do $$declare definition text;begin
+ definition:=pg_get_functiondef('chaos_private.advance(public.chaos_rooms)'::regprocedure);
+ definition:=replace(definition,'r.round_no=10','r.round_no=r.round_limit');
+ definition:=replace(definition,'r.match_winner:=case when r.host_score>r.guest_score then r.host when r.guest_score>r.host_score then r.guest else null end;',
+ 'r.match_winner:=case when r.is_bot and r.required_wins>0 then case when r.host_score>=r.required_wins then r.host else r.guest end when r.host_score>r.guest_score then r.host when r.guest_score>r.host_score then r.guest else null end;');
+ execute definition;
+end;$$;
+create function chaos_private.bot_choice(r public.chaos_rooms) returns integer language plpgsql set search_path='' as $$
+declare predicted integer;chosen integer;
+begin
+ -- Only completed earlier rounds are read. The active human choice is never inspected.
+ if r.campaign_stage is not null and random()<least(.85,r.campaign_stage*.12) then
+  select choice into predicted from (select choice from chaos_private.moves where room_id=r.id and match_no=r.match_no and round_no<r.round_no and player=r.host order by round_no desc limit 5) history group by choice order by count(*) desc,random() limit 1;
+  if predicted is not null then select n into chosen from generate_series(0,6) n where chaos_private.beats(n,predicted) order by random() limit 1;return chosen;end if;
+ end if;
+ return floor(random()*7)::integer;
+end;$$;
+revoke all on function chaos_private.bot_choice(public.chaos_rooms) from public,anon,authenticated;
+do $$begin execute replace(pg_get_functiondef('chaos_private.chaos_action_v5(text,text,text,integer,integer,integer)'::regprocedure),'bot_move:=floor(random()*7)::integer;','bot_move:=chaos_private.bot_choice(r);');end;$$;
+
+create or replace function chaos_private.reward_match() returns trigger language plpgsql security definer set search_path='' as $$
+declare p uuid;inserted integer;coin_reward integer;xp_reward integer;
+begin
+ if new.phase='finished' and (old.phase is distinct from new.phase or old.match_no<>new.match_no) then
+  for p in select id from(select new.host id union select new.guest id where not new.is_bot) players order by id loop
+   if p is not null and exists(select 1 from chaos_private.moves where room_id=new.id and match_no=new.match_no and player=p) then
+    insert into chaos_private.rewards values(new.id,new.match_no,p) on conflict do nothing;get diagnostics inserted=row_count;
+    if inserted=1 then
+     coin_reward:=case when new.match_winner=p then new.reward_coins else 0 end;
+     xp_reward:=case when new.match_winner=p then new.reward_xp when new.match_winner is null then 60+coalesce(new.campaign_stage,0)*15 else 40+coalesce(new.campaign_stage,0)*10 end;
+     update public.chaos_profiles set coins=coins+coin_reward,xp=xp+xp_reward,matches=matches+1,wins=wins+case when new.match_winner=p then 1 else 0 end,
+      campaign_unlocked=case when new.campaign_stage is not null and new.match_winner=p then greatest(campaign_unlocked,new.campaign_stage+1) else campaign_unlocked end where id=p;
+    end if;
+   end if;
+  end loop;
+ end if;return new;
+end;$$;
+revoke all on function chaos_private.reward_match() from public,anon,authenticated;
+
+alter function public.chaos_social(text,text,integer,text,uuid,text) rename to chaos_social_v6;
+alter function public.chaos_social_v6(text,text,integer,text,uuid,text) set schema chaos_private;
+revoke all on function chaos_private.chaos_social_v6(text,text,integer,text,uuid,text) from public,anon,authenticated;
+create function public.chaos_social(action text,display_name text default null,avatar_id integer default null,friend_code text default null,target_id uuid default null,item_id text default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();d jsonb;
+begin d:=chaos_private.chaos_social_v6(action,display_name,avatar_id,friend_code,target_id,item_id);
+ return d||jsonb_build_object('packs',coalesce((select jsonb_object_agg(tier::text,quantity) from chaos_private.packs where player=u),'{}'::jsonb));end;$$;
+revoke all on function public.chaos_social(text,text,integer,text,uuid,text) from public,anon;
+grant execute on function public.chaos_social(text,text,integer,text,uuid,text) to authenticated;
+
+-- Card designs have their own equipment slot, never a gameplay modifier.
+alter function public.chaos_style(text,jsonb,text) rename to chaos_style_v6;
+alter function public.chaos_style_v6(text,jsonb,text) set schema chaos_private;
+revoke all on function chaos_private.chaos_style_v6(text,jsonb,text) from public,anon,authenticated;
+create function public.chaos_style(action text,appearance jsonb default null,item_id text default null) returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();s chaos_private.styles;
+begin
+ if action='equip' then
+  if item_id='card:reset' then update public.chaos_profiles set card_skin='classic' where id=u;return public.chaos_social('state');end if;
+  select * into s from chaos_private.styles where id=item_id;
+  if s.slot='card' then
+   if not exists(select 1 from chaos_private.inventory where player=u and item=item_id) then raise exception 'Diesen Style besitzt du nicht';end if;
+   update public.chaos_profiles set card_skin=s.id where id=u;return public.chaos_social('state');
+  end if;
+ end if;
+ return chaos_private.chaos_style_v6(action,appearance,item_id);
+end;$$;
+revoke all on function public.chaos_style(text,jsonb,text) from public,anon;
+grant execute on function public.chaos_style(text,jsonb,text) to authenticated;
+
+create function public.chaos_loot(action text,pack_tier integer,request_id uuid) returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();p public.chaos_profiles;receipt chaos_private.loot_receipts;price integer;roll integer;draw_rarity integer;s chaos_private.styles;reward jsonb;amount integer;qty integer;
+begin
+ if request_id is null or pack_tier not between 0 and 2 or pack_tier is null then raise exception 'Pack ungültig';end if;
+ select * into p from public.chaos_profiles where id=u for update;if p.id is null then raise exception 'Bitte zuerst dein Profil einrichten';end if;
+ select * into receipt from chaos_private.loot_receipts where id=request_id;
+ if receipt.id is not null then
+  if receipt.player<>u or receipt.action<>action or receipt.tier<>pack_tier then raise exception 'Anfrage ungültig';end if;
+  return public.chaos_social('state')||jsonb_build_object('loot',receipt.reward);
+ end if;
+ if action='buy' then
+  price:=case pack_tier when 0 then 150 when 1 then 400 else 900 end;
+  if p.coins<price then raise exception 'Nicht genügend Coins';end if;
+  update public.chaos_profiles set coins=coins-price where id=u;
+  insert into chaos_private.packs values(u,pack_tier,1) on conflict(player,tier) do update set quantity=chaos_private.packs.quantity+1;
+  reward:=jsonb_build_object('kind','purchased','tier',pack_tier);
+ elsif action='open' then
+  select quantity into qty from chaos_private.packs where player=u and tier=pack_tier for update;
+  if coalesce(qty,0)<1 then raise exception 'Kein Pack dieser Stufe vorhanden';end if;
+  update chaos_private.packs set quantity=quantity-1 where player=u and tier=pack_tier;
+  roll:=floor(random()*100)::integer;
+  if roll<(case pack_tier when 0 then 20 when 1 then 10 else 5 end) then reward:=jsonb_build_object('kind','empty','tier',pack_tier);
+  elsif roll<(case pack_tier when 0 then 55 when 1 then 40 else 30 end) then
+   amount:=case pack_tier when 0 then 40+floor(random()*61)::integer when 1 then 100+floor(random()*151)::integer else 250+floor(random()*451)::integer end;
+   update public.chaos_profiles set coins=coins+amount where id=u;reward:=jsonb_build_object('kind','coins','coins',amount,'tier',pack_tier);
+  else
+   draw_rarity:=case pack_tier when 0 then case when roll<90 then 1 when roll<98 then 2 else 3 end when 1 then case when roll<75 then 1 when roll<95 then 2 else 3 end else case when roll<55 then 1 when roll<85 then 2 else 3 end end;
+   select * into s from chaos_private.styles where chaos_private.styles.rarity=draw_rarity order by random() limit 1;
+   if exists(select 1 from chaos_private.inventory where player=u and item=s.id) then
+    amount:=s.price/5;update public.chaos_profiles set coins=coins+amount where id=u;reward:=jsonb_build_object('kind','duplicate','item',s.id,'coins',amount,'tier',pack_tier);
+   else insert into chaos_private.inventory values(u,s.id);reward:=jsonb_build_object('kind','item','item',s.id,'tier',pack_tier);end if;
+  end if;
+ else raise exception 'Ungültige Aktion';end if;
+ insert into chaos_private.loot_receipts values(request_id,u,action,pack_tier,reward,clock_timestamp());
+ return public.chaos_social('state')||jsonb_build_object('loot',reward);
+end;$$;
+revoke all on function public.chaos_loot(text,integer,uuid) from public,anon;
+grant execute on function public.chaos_loot(text,integer,uuid) to authenticated;
+
+alter function public.chaos_action(text,text,text,integer,integer,integer) rename to chaos_action_v6;
+alter function public.chaos_action_v6(text,text,text,integer,integer,integer) set schema chaos_private;
+revoke all on function chaos_private.chaos_action_v6(text,text,text,integer,integer,integer) from public,anon,authenticated;
+create function public.chaos_action(action text,room_code text default null,player_name text default null,choice integer default null,expected_round integer default null,expected_match integer default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();d jsonb;r public.chaos_rooms;g public.chaos_profiles;
+begin
+ d:=chaos_private.chaos_action_v6(action,room_code,player_name,choice,expected_round,expected_match);
+ if d->>'left'='true' or d->'room' is null then return d;end if;
+ select * into r from public.chaos_rooms where id=(d->'room'->>'id')::uuid;
+ if r.campaign_stage is not null and r.phase='finished' and d?'rewards' then
+  d:=jsonb_set(d,'{rewards,xp}',to_jsonb(case when r.match_winner=u then r.reward_xp when r.match_winner is null then 60+r.campaign_stage*15 else 40+r.campaign_stage*10 end));
+  d:=jsonb_set(d,'{rewards,coins}',to_jsonb(case when r.match_winner=u then r.reward_coins else 0 end));
+ end if;
+ d:=jsonb_set(d,'{players,host,card_skin}',to_jsonb((select card_skin from public.chaos_profiles where id=r.host)));
+ select * into g from public.chaos_profiles where id=r.guest;
+ if g.id is not null then d:=jsonb_set(d,'{players,guest,card_skin}',to_jsonb(g.card_skin));end if;
+ return d;
+end;$$;
+revoke all on function public.chaos_action(text,text,text,integer,integer,integer) from public,anon;
+grant execute on function public.chaos_action(text,text,text,integer,integer,integer) to authenticated;
+
+create function public.chaos_campaign(stage integer) returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();p public.chaos_profiles;d jsonb;r public.chaos_rooms;names text[]:=array['Milo','Nora','Kaito','Seraphine','Rook','Nyx','Astra','Veyr'];xps integer[]:=array[120,160,200,320,260,300,360,600];coins integer[]:=array[100,140,180,300,240,280,340,600];
+begin
+ select * into p from public.chaos_profiles where id=u for update;
+ if p.id is null or stage is null or stage not between 0 and 7 or stage>p.campaign_unlocked then raise exception 'Dieses Kapitel ist noch gesperrt';end if;
+ d:=public.chaos_action('bot');select * into r from public.chaos_rooms where id=(d->'room'->>'id')::uuid;
+ update public.chaos_rooms set campaign_stage=stage,guest_name=names[stage+1],round_limit=case stage when 3 then 14 when 7 then 18 else 10 end,required_wins=case stage when 3 then 8 when 7 then 11 else 0 end,reward_xp=xps[stage+1],reward_coins=coins[stage+1] where id=r.id returning * into r;
+ update chaos_private.moves set choice=chaos_private.bot_choice(r) where room_id=r.id and player=r.guest and match_no=r.match_no and round_no=r.round_no;
+ return public.chaos_action('state',r.code);
+end;$$;
+revoke all on function public.chaos_campaign(integer) from public,anon;
+grant execute on function public.chaos_campaign(integer) to authenticated;
+
+
+-- 008_life_duels.sql
+
+-- Existing live matches retain their rules; only newly created rooms use version 2.
+alter table public.chaos_rooms add column rules_version integer not null default 1 check(rules_version in(1,2));
+alter table public.chaos_rooms alter column rules_version set default 2;
+alter table public.chaos_rooms add column host_hp integer not null default 5 check(host_hp>=0);
+alter table public.chaos_rooms add column guest_hp integer not null default 5 check(guest_hp>=0);
+alter table public.chaos_rooms add column host_max_hp integer not null default 5 check(host_max_hp>0);
+alter table public.chaos_rooms add column guest_max_hp integer not null default 5 check(guest_max_hp>0);
+alter table public.chaos_rooms add column host_confirmed boolean not null default false;
+alter table public.chaos_rooms add column guest_confirmed boolean not null default false;
+alter table public.chaos_rooms add column host_missed integer not null default 0;
+alter table public.chaos_rooms add column guest_missed integer not null default 0;
+alter table public.chaos_rooms add column end_reason text check(end_reason in('knockout','forfeit','inactivity','abandoned'));
+create table chaos_private.sessions(
+ player uuid primary key references public.chaos_profiles on delete cascade,
+ room_id uuid references public.chaos_rooms on delete cascade
+);
+alter table chaos_private.sessions enable row level security;
+revoke all on chaos_private.sessions from public,anon,authenticated;
+create index chaos_rooms_participant_host on public.chaos_rooms(host,phase);
+create index chaos_rooms_participant_guest on public.chaos_rooms(guest,phase) where not is_bot;
+
+insert into chaos_private.sessions(player,room_id)
+select distinct on(player) player,id from (select host as player,id,updated_at from public.chaos_rooms where phase<>'finished' union all select guest,id,updated_at from public.chaos_rooms where guest is not null and not is_bot and phase<>'finished') active order by player,updated_at desc;
+
+-- Serialize assignment per player, rather than counting historical rooms.
+create function chaos_private.claim_session(u uuid,requested uuid default null) returns void
+language plpgsql set search_path='' as $$
+declare existing public.chaos_rooms;existing_id uuid;seen timestamptz;
+begin
+ insert into chaos_private.sessions(player) values(u) on conflict do nothing;
+ select room_id into existing_id from chaos_private.sessions where player=u for update;
+ select * into existing from public.chaos_rooms where id=existing_id;
+ if existing.id is not null and existing.id is distinct from requested and existing.phase<>'finished' then
+  seen:=case when existing.host=u then existing.host_seen else existing.guest_seen end;
+  if seen>clock_timestamp()-interval '90 seconds' then
+   raise exception 'Du hast bereits einen laufenden Kampf. Kehre über „Kampf fortsetzen“ zurück.';
+  end if;
+  update public.chaos_rooms set phase='finished',
+   end_reason=case when not existing.is_bot and existing.guest is not null and (case when u=existing.host then existing.guest_seen else existing.host_seen end)>clock_timestamp()-interval '90 seconds' then 'forfeit' else 'abandoned' end,
+   match_winner=case when not existing.is_bot and existing.guest is not null and (case when u=existing.host then existing.guest_seen else existing.host_seen end)>clock_timestamp()-interval '90 seconds' then case when u=existing.host then existing.guest else existing.host end else null end,
+   next_round_at=clock_timestamp(),updated_at=clock_timestamp() where id=existing.id;
+ end if;
+ update chaos_private.sessions set room_id=requested where player=u;
+end;$$;
+
+create function chaos_private.advance_lives(r public.chaos_rooms) returns public.chaos_rooms
+language plpgsql set search_path='' as $$
+declare a integer;b integer;resolution timestamptz;
+begin
+ if r.phase='select' and (clock_timestamp()>=r.select_until or (r.host_confirmed and r.guest_confirmed)) then
+  resolution:=least(clock_timestamp(),r.select_until);
+  select choice into a from chaos_private.moves where room_id=r.id and match_no=r.match_no and round_no=r.round_no and player=r.host;
+  select choice into b from chaos_private.moves where room_id=r.id and match_no=r.match_no and round_no=r.round_no and player=r.guest;
+  r.host_missed:=case when a is null then r.host_missed+1 else 0 end;
+  r.guest_missed:=case when b is null then r.guest_missed+1 else 0 end;
+  -- Missing selections get a server-random power for either side. These automatic
+  -- choices are not written to moves and therefore cannot mint participation XP.
+  a:=coalesce(a,floor(random()*7)::integer);b:=coalesce(b,floor(random()*7)::integer);
+  r.host_choice:=a;r.guest_choice:=b;r.winner:=null;
+  if a<>b then
+   r.winner:=case when chaos_private.beats(a,b) then r.host else r.guest end;
+   if r.winner=r.host then r.guest_hp:=greatest(0,r.guest_hp-1);r.host_score:=r.host_score+1;
+   else r.host_hp:=greatest(0,r.host_hp-1);r.guest_score:=r.guest_score+1;end if;
+  end if;
+  r.reveal_at:=resolution;r.next_round_at:=resolution+interval '6 seconds';r.phase:='result';
+  if r.host_hp=0 or r.guest_hp=0 then
+   r.phase:='finished';r.end_reason:='knockout';r.match_winner:=case when r.guest_hp=0 then r.host else r.guest end;
+  elsif r.host_missed>=3 or r.guest_missed>=3 then
+   r.phase:='finished';r.end_reason:='inactivity';
+   r.match_winner:=case when r.host_missed>=3 and r.guest_missed>=3 then null when r.host_missed>=3 then r.guest else r.host end;
+  end if;
+ end if;
+ if r.phase='result' and clock_timestamp()>=r.next_round_at then
+  r.round_no:=r.round_no+1;r.phase:='select';r.select_until:=clock_timestamp()+interval '10 seconds';
+  r.next_round_at:=null;r.host_choice:=null;r.guest_choice:=null;r.winner:=null;r.reveal_at:=null;
+  r.host_locked:=false;r.guest_locked:=r.is_bot;r.host_confirmed:=false;r.guest_confirmed:=r.is_bot;
+  if r.is_bot then
+   insert into chaos_private.moves values(r.id,r.match_no,r.round_no,r.guest,chaos_private.bot_choice(r)) on conflict do nothing;
+  end if;
+ end if;
+ return r;
+end;$$;
+
+create function chaos_private.life_snapshot(r public.chaos_rooms,u uuid) returns jsonb
+language plpgsql set search_path='' as $$
+declare mine integer;d jsonb;h public.chaos_profiles;g public.chaos_profiles;p public.chaos_profiles;
+begin
+ if u<>r.host and u is distinct from r.guest then raise exception 'Kein Zugriff auf diesen Raum';end if;
+ select * into h from public.chaos_profiles where id=r.host;select * into g from public.chaos_profiles where id=r.guest;
+ select * into p from public.chaos_profiles where id=u;
+ select choice into mine from chaos_private.moves where room_id=r.id and match_no=r.match_no and round_no=r.round_no and player=u;
+ d:=jsonb_build_object('room',to_jsonb(r),'my_choice',mine,'server_now',clock_timestamp(),
+  'wallet',jsonb_build_object('coins',p.coins,'xp',p.xp),
+  'players',jsonb_build_object('host',jsonb_build_object('appearance',h.appearance,'frame',h.frame,'xp',h.xp,'card_skin',h.card_skin),
+   'guest',jsonb_build_object('appearance',g.appearance,'frame',g.frame,'xp',g.xp,'card_skin',g.card_skin)));
+ if exists(select 1 from chaos_private.rewards where room_id=r.id and match_no=r.match_no and player=u) then
+  d:=d||jsonb_build_object('rewards',jsonb_build_object('xp',case when r.match_winner=u then r.reward_xp when r.match_winner is null then 60+coalesce(r.campaign_stage,0)*15 else 40+coalesce(r.campaign_stage,0)*10 end,
+   'coins',case when r.match_winner=u then r.reward_coins else 0 end,'total_xp',p.xp));
+ end if;return d;
+end;$$;
+
+-- Reward policy is unchanged, except abandoned sessions cannot award anything.
+do $$declare definition text;begin
+ definition:=pg_get_functiondef('chaos_private.reward_match()'::regprocedure);
+ definition:=replace(definition,'if new.phase=''finished'' and (','if new.phase=''finished'' and new.end_reason is distinct from ''abandoned'' and (');
+ execute definition;
+end;$$;
+
+alter function public.chaos_action(text,text,text,integer,integer,integer) rename to chaos_action_v7;
+alter function public.chaos_action_v7(text,text,text,integer,integer,integer) set schema chaos_private;
+revoke all on function chaos_private.chaos_action_v7(text,text,text,integer,integer,integer) from public,anon,authenticated;
+create function public.chaos_action(action text,room_code text default null,player_name text default null,choice integer default null,expected_round integer default null,expected_match integer default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();r public.chaos_rooms;prior public.chaos_rooms;p public.chaos_profiles;
+ lim chaos_private.limits;candidate text;i integer;j integer;mine integer;action_error text;
+ alphabet text:='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+begin
+ select * into p from public.chaos_profiles where id=u;
+ if p.id is null then raise exception 'Bitte zuerst dein Profil einrichten';end if;
+ if action='resume' then
+  select x.* into r from public.chaos_rooms x join chaos_private.sessions s on s.room_id=x.id where s.player=u and x.phase<>'finished';
+  if r.id is null then return jsonb_build_object('room',null);end if;
+  return public.chaos_action('ping',r.code);
+ end if;
+ if action in('create','bot','join') then
+  insert into chaos_private.limits(player) values(u) on conflict do nothing;
+  select * into lim from chaos_private.limits where player=u for update;
+ end if;
+ if action in('create','bot') then
+  perform chaos_private.claim_session(u);
+  if lim.created>clock_timestamp()-interval '10 seconds' then raise exception 'Bitte kurz warten';end if;
+  for i in 1..20 loop
+   candidate:='';for j in 1..6 loop candidate:=candidate||substr(alphabet,1+floor(random()*length(alphabet))::integer,1);end loop;
+   begin
+    insert into public.chaos_rooms(code,host,host_name) values(candidate,u,p.name) returning * into r;exit;
+   exception when unique_violation then null;end;
+  end loop;
+  if r.id is null then raise exception 'Raum konnte nicht erstellt werden';end if;
+  update chaos_private.sessions set room_id=r.id where player=u;
+  update chaos_private.limits set created=clock_timestamp() where player=u;
+  if action='bot' then
+   update public.chaos_rooms set is_bot=true,guest=gen_random_uuid(),guest_name='Chaos-Bot',guest_seen=clock_timestamp(),
+    phase='select',select_until=clock_timestamp()+interval '10 seconds',guest_locked=true,guest_confirmed=true,updated_at=clock_timestamp() where id=r.id returning * into r;
+   insert into chaos_private.moves values(r.id,r.match_no,r.round_no,r.guest,chaos_private.bot_choice(r));
+  end if;
+ else
+  -- Joiners lock their assignment before the target room, preventing two tabs
+  -- from putting the same player into different active matches.
+  if action='join' then
+   if lim.joined is null or lim.joined<clock_timestamp()-interval '1 minute' then
+    update chaos_private.limits set joined=clock_timestamp(),join_count=1 where player=u;
+   elsif lim.join_count>=15 then return jsonb_build_object('error','Zu viele Versuche. Bitte eine Minute warten.');
+   else update chaos_private.limits set join_count=join_count+1 where player=u;end if;
+   select * into r from public.chaos_rooms where code=upper(trim(room_code));
+   if r.id is null or r.updated_at<clock_timestamp()-interval '24 hours' then return jsonb_build_object('error','Raum nicht gefunden oder abgelaufen');end if;
+   perform chaos_private.claim_session(u,r.id);
+  end if;
+  select * into r from public.chaos_rooms where code=upper(trim(room_code)) for update;
+  if r.id is null or r.updated_at<clock_timestamp()-interval '24 hours' then raise exception 'Raum nicht gefunden oder abgelaufen';end if;
+  if r.rules_version=1 then return chaos_private.chaos_action_v7(action,room_code,player_name,choice,expected_round,expected_match);end if;
+  prior:=r;
+  if action='join' then
+   if r.is_bot and r.host<>u then raise exception 'Dies ist ein Duell gegen den Bot';end if;
+   if r.reserved_guest is not null and r.reserved_guest<>u and r.host<>u then raise exception 'Dieser Raum ist für einen herausgeforderten Freund reserviert';end if;
+   if u=r.host or u=r.guest then null;
+   elsif r.guest is not null or r.phase<>'lobby' then raise exception 'Raum ist bereits voll';
+   else r.guest:=u;r.guest_name:=p.name;r.guest_seen:=clock_timestamp();end if;
+  elsif u<>r.host and u is distinct from r.guest then raise exception 'Kein Zugriff auf diesen Raum';end if;
+  r:=chaos_private.advance_lives(r);
+  if action in('choose','confirm','ready') and (expected_round is distinct from r.round_no or expected_match is distinct from r.match_no) then
+   action_error:='Runde hat sich geändert. Bitte aktualisieren';
+  elsif action='start' then
+   if u<>r.host then raise exception 'Nur der Gastgeber kann starten';end if;
+   if r.phase<>'lobby' or r.guest is null or r.guest_seen<clock_timestamp()-interval '45 seconds' then raise exception 'Beide Spieler müssen verbunden sein';end if;
+   r.phase:='select';r.select_until:=clock_timestamp()+interval '10 seconds';
+  elsif action='choose' then
+   if r.phase<>'select' then action_error:='Auswahlzeit abgelaufen';
+   elsif choice is null or choice not between 0 and 6 then action_error:='Ungültiger Spielzug';
+   elsif (u=r.host and r.host_confirmed) or (u=r.guest and r.guest_confirmed) then action_error:='Deine Auswahl ist bereits bestätigt';
+   else
+    insert into chaos_private.moves values(r.id,r.match_no,r.round_no,u,choice)
+     on conflict(room_id,match_no,round_no,player) do update set choice=excluded.choice;
+    if u=r.host then r.host_locked:=true;else r.guest_locked:=true;end if;
+   end if;
+  elsif action='confirm' then
+   if r.phase<>'select' then action_error:='Auswahlzeit abgelaufen';
+   elsif not exists(select 1 from chaos_private.moves where room_id=r.id and match_no=r.match_no and round_no=r.round_no and player=u) then action_error:='Wähle zuerst eine Macht';
+   else
+    if u=r.host then r.host_confirmed:=true;else r.guest_confirmed:=true;end if;
+    r:=chaos_private.advance_lives(r);
+   end if;
+  elsif action='ready' then
+   if r.phase<>'finished' then action_error:='Ein Rematch ist erst nach Matchende möglich';
+   elsif clock_timestamp()<r.next_round_at then action_error:='Kampf läuft noch';
+   else
+    perform chaos_private.claim_session(u,r.id);
+    if u=r.host then r.host_ready:=true;else r.guest_ready:=true;end if;
+    if r.is_bot then r.guest_ready:=true;end if;
+    if r.host_ready and r.guest_ready then
+     -- Both real players must still be available for the same room.
+     if not r.is_bot then perform chaos_private.claim_session(case when u=r.host then r.guest else r.host end,r.id);end if;
+     r.match_no:=r.match_no+1;r.round_no:=1;r.host_score:=0;r.guest_score:=0;r.match_winner:=null;r.end_reason:=null;
+     r.host_hp:=r.host_max_hp;r.guest_hp:=r.guest_max_hp;r.host_missed:=0;r.guest_missed:=0;
+     r.phase:='select';r.select_until:=clock_timestamp()+interval '10 seconds';r.next_round_at:=null;
+     r.host_ready:=false;r.guest_ready:=false;r.host_locked:=false;r.guest_locked:=r.is_bot;
+     r.host_confirmed:=false;r.guest_confirmed:=r.is_bot;r.host_choice:=null;r.guest_choice:=null;r.winner:=null;r.reveal_at:=null;
+     if r.is_bot then insert into chaos_private.moves values(r.id,r.match_no,r.round_no,r.guest,chaos_private.bot_choice(r));end if;
+    end if;
+   end if;
+  elsif action='leave' then
+   if r.phase='lobby' and u=r.guest then r.guest:=null;r.guest_name:=null;r.guest_seen:=null;
+   elsif r.phase<>'finished' then
+    r.phase:='finished';r.end_reason:=case when r.is_bot or r.guest is null then 'abandoned' else 'forfeit' end;
+    r.match_winner:=case when r.end_reason='abandoned' then null when u=r.host then r.guest else r.host end;
+    r.next_round_at:=clock_timestamp();r.reveal_at:=clock_timestamp();
+   end if;
+   update chaos_private.sessions set room_id=null where player=u and room_id=r.id;
+  elsif action not in('join','state','ping') then raise exception 'Ungültige Aktion';end if;
+  if action not in('state','leave') then
+   if u=r.host then r.host_seen:=clock_timestamp();else r.guest_seen:=clock_timestamp();end if;
+  end if;
+  if action<>'state' or r is distinct from prior then
+   r.updated_at:=clock_timestamp();
+   update public.chaos_rooms set guest=r.guest,guest_name=r.guest_name,guest_seen=r.guest_seen,host_seen=r.host_seen,
+    phase=r.phase,match_no=r.match_no,round_no=r.round_no,host_score=r.host_score,guest_score=r.guest_score,
+    host_locked=r.host_locked,guest_locked=r.guest_locked,host_ready=r.host_ready,guest_ready=r.guest_ready,
+    host_choice=r.host_choice,guest_choice=r.guest_choice,winner=r.winner,reveal_at=r.reveal_at,
+    select_until=r.select_until,next_round_at=r.next_round_at,match_winner=r.match_winner,updated_at=r.updated_at,
+    host_hp=r.host_hp,guest_hp=r.guest_hp,host_confirmed=r.host_confirmed,guest_confirmed=r.guest_confirmed,
+    host_missed=r.host_missed,guest_missed=r.guest_missed,end_reason=r.end_reason where id=r.id;
+  end if;
+  if action='leave' then return jsonb_build_object('left',true);end if;
+ end if;
+ return chaos_private.life_snapshot(r,u)||jsonb_build_object('error',action_error);
+end;$$;
+revoke all on function public.chaos_action(text,text,text,integer,integer,integer) from public,anon;
+grant execute on function public.chaos_action(text,text,text,integer,integer,integer) to authenticated;
+
+alter function public.chaos_campaign(integer) rename to chaos_campaign_v7;
+alter function public.chaos_campaign_v7(integer) set schema chaos_private;
+revoke all on function chaos_private.chaos_campaign_v7(integer) from public,anon,authenticated;
+create function public.chaos_campaign(stage integer) returns jsonb language plpgsql security definer set search_path='' as $$
+declare d jsonb;r public.chaos_rooms;u uuid:=chaos_private.account_uid();hp integer;
+begin
+ d:=chaos_private.chaos_campaign_v7(stage);
+ hp:=case stage when 3 then 8 when 7 then 11 else 5 end;
+ update public.chaos_rooms set guest_hp=hp,guest_max_hp=hp where id=(d->'room'->>'id')::uuid returning * into r;
+ return public.chaos_action('state',r.code);
+end;$$;
+revoke all on function public.chaos_campaign(integer) from public,anon;
+grant execute on function public.chaos_campaign(integer) to authenticated;
+revoke all on all functions in schema chaos_private from public,anon,authenticated;
+
+
+-- 009_endless_arena.sql
+
+alter table chaos_private.rewards add column xp integer check(xp>=0);
+alter table chaos_private.rewards add column coins integer check(coins>=0);
+alter table public.chaos_profiles add column endless_best integer not null default 0 check(endless_best>=0);
+alter table public.chaos_rooms add column game_mode text not null default 'duel' check(game_mode in('duel','endless'));
+alter table public.chaos_rooms add column endless_wave integer not null default 1 check(endless_wave>0);
+alter table public.chaos_rooms drop constraint chaos_rooms_host_score_check;
+alter table public.chaos_rooms drop constraint chaos_rooms_guest_score_check;
+alter table public.chaos_rooms add check(host_score>=0);
+alter table public.chaos_rooms add check(guest_score>=0);
+create table chaos_private.endless_runs(
+ id uuid primary key default gen_random_uuid(),
+ player uuid not null references public.chaos_profiles on delete cascade,
+ room_id uuid unique references public.chaos_rooms on delete set null,
+ current_wave integer not null default 1 check(current_wave>0),
+ defeated integer not null default 0 check(defeated>=0),
+ coins integer not null default 0 check(coins>=0),xp integer not null default 0 check(xp>=0),
+ final_hp integer not null default 10 check(final_hp between 0 and 10),
+ previous_best integer not null default 0,active boolean not null default true,
+ created_at timestamptz not null default clock_timestamp(),finished_at timestamptz
+);
+alter table chaos_private.endless_runs enable row level security;
+revoke all on chaos_private.endless_runs from public,anon,authenticated;
+create unique index endless_one_active_run on chaos_private.endless_runs(player) where active;
+create index endless_history on chaos_private.endless_runs(player,created_at desc);
+create function chaos_private.endless_coins(wave integer) returns integer language sql immutable set search_path='' as $$select least(125,20+least(wave,21)*5);$$;
+create function chaos_private.endless_xp(wave integer) returns integer language sql immutable set search_path='' as $$select least(120,15+least(wave,27)*4);$$;
+create function chaos_private.endless_name(wave integer) returns text language sql immutable set search_path='' as $$
+ select (array['Funkenwächter','Nebelhexe','Kristallklinge','Sonnenritter','Schattenvogt','Astraljägerin','Sternenwache','Chaosfürst'])[1+(wave-1)%8]||' · '||wave::text;
+$$;
+
+-- An inter-wave victory is still part of the same active run.
+do $$declare definition text;begin
+ definition:=pg_get_functiondef('chaos_private.claim_session(uuid,uuid)'::regprocedure);
+ definition:=replace(definition,'existing.phase<>''finished''','(existing.phase<>''finished'' or (existing.game_mode=''endless'' and existing.match_winner=existing.host and existing.end_reason=''knockout''))');
+ definition:=replace(definition,'next_round_at=clock_timestamp(),updated_at=clock_timestamp() where id=existing.id;',
+ 'next_round_at=clock_timestamp(),updated_at=clock_timestamp() where id=existing.id;
+  update chaos_private.endless_runs set active=false,finished_at=clock_timestamp() where room_id=existing.id and active;');
+ execute definition;
+ definition:=pg_get_functiondef('chaos_private.bot_choice(public.chaos_rooms)'::regprocedure);
+ definition:=replace(definition,'if r.campaign_stage is not null and random()<least(.85,r.campaign_stage*.12) then',
+ 'if (r.campaign_stage is not null or r.game_mode=''endless'') and random()<(case when r.game_mode=''endless'' then least(.75,(r.endless_wave-1)*.08) else least(.85,r.campaign_stage*.12) end) then');
+ execute definition;
+end;$$;
+
+create or replace function chaos_private.reward_match() returns trigger language plpgsql security definer set search_path='' as $$
+declare p uuid;inserted integer;coin_reward integer;xp_reward integer;
+begin
+ if new.phase='finished' and (old.phase is distinct from new.phase or old.match_no<>new.match_no) then
+  if new.game_mode='endless' then
+   if new.match_winner=new.host and new.end_reason='knockout' then
+    coin_reward:=0;xp_reward:=0;
+    if exists(select 1 from chaos_private.moves where room_id=new.id and match_no=new.match_no and player=new.host) then coin_reward:=chaos_private.endless_coins(new.endless_wave);xp_reward:=chaos_private.endless_xp(new.endless_wave);end if;
+    insert into chaos_private.rewards(room_id,match_no,player,xp,coins) values(new.id,new.match_no,new.host,xp_reward,coin_reward) on conflict do nothing;get diagnostics inserted=row_count;
+    if inserted=1 then
+     update public.chaos_profiles set coins=coins+coin_reward,xp=xp+xp_reward,endless_best=case when exists(select 1 from chaos_private.moves where room_id=new.id and player=new.host) then greatest(endless_best,new.endless_wave) else endless_best end where id=new.host;
+     update chaos_private.endless_runs set defeated=defeated+1,coins=coins+coin_reward,xp=xp+xp_reward,final_hp=new.host_hp where room_id=new.id and active;
+    end if;
+   else
+    update chaos_private.endless_runs set active=false,finished_at=clock_timestamp(),final_hp=new.host_hp where room_id=new.id and active;
+    if exists(select 1 from chaos_private.moves where room_id=new.id and player=new.host) then
+     xp_reward:=case when new.end_reason='knockout' and new.host_hp=0 then 10 else 0 end;
+     update public.chaos_profiles set xp=xp+xp_reward,matches=matches+1,endless_best=greatest(endless_best,new.endless_wave) where id=new.host;
+     update chaos_private.endless_runs set xp=xp+xp_reward where room_id=new.id;
+    end if;
+   end if;
+   return new;
+  end if;
+  if new.end_reason is distinct from 'abandoned' then
+   for p in select id from(select new.host id union select new.guest id where not new.is_bot) players order by id loop
+    if p is not null and exists(select 1 from chaos_private.moves where room_id=new.id and match_no=new.match_no and player=p) then
+     insert into chaos_private.rewards values(new.id,new.match_no,p) on conflict do nothing;get diagnostics inserted=row_count;
+     if inserted=1 then
+      coin_reward:=case when new.match_winner=p then new.reward_coins else 0 end;
+      xp_reward:=case when new.match_winner=p then new.reward_xp when new.match_winner is null then 60+coalesce(new.campaign_stage,0)*15 else 40+coalesce(new.campaign_stage,0)*10 end;
+      update public.chaos_profiles set coins=coins+coin_reward,xp=xp+xp_reward,matches=matches+1,wins=wins+case when new.match_winner=p then 1 else 0 end,
+       campaign_unlocked=case when new.campaign_stage is not null and new.match_winner=p then greatest(campaign_unlocked,new.campaign_stage+1) else campaign_unlocked end where id=p;
+     end if;
+    end if;
+   end loop;
+  end if;
+ end if;return new;
+end;$$;
+
+alter function chaos_private.advance_lives(public.chaos_rooms) rename to advance_lives_v8;
+create function chaos_private.advance_lives(r public.chaos_rooms) returns public.chaos_rooms language plpgsql set search_path='' as $$
+begin
+ r:=chaos_private.advance_lives_v8(r);
+ if r.game_mode='endless' and r.phase='finished' and r.match_winner=r.host and r.host_missed>=3 then
+  r.match_winner:=r.guest;r.end_reason:='inactivity';
+ end if;
+ if r.game_mode='endless' and r.phase='finished' and r.match_winner=r.host and r.end_reason='knockout' and clock_timestamp()>=r.next_round_at then
+  r.endless_wave:=r.endless_wave+1;r.match_no:=r.match_no+1;r.round_no:=1;r.host_score:=0;r.guest_score:=0;
+  r.guest_hp:=r.endless_wave;r.guest_max_hp:=r.endless_wave;r.guest_name:=chaos_private.endless_name(r.endless_wave);
+  r.reward_coins:=chaos_private.endless_coins(r.endless_wave);r.reward_xp:=chaos_private.endless_xp(r.endless_wave);
+  r.phase:='select';r.select_until:=clock_timestamp()+interval '10 seconds';r.next_round_at:=null;r.end_reason:=null;r.match_winner:=null;
+  r.host_choice:=null;r.guest_choice:=null;r.winner:=null;r.reveal_at:=null;r.host_locked:=false;r.guest_locked:=true;
+  r.host_confirmed:=false;r.guest_confirmed:=true;r.host_ready:=false;r.guest_ready:=false;r.guest_missed:=0;
+  insert into chaos_private.moves values(r.id,r.match_no,r.round_no,r.guest,chaos_private.bot_choice(r));
+  update chaos_private.endless_runs set current_wave=r.endless_wave,final_hp=r.host_hp where room_id=r.id and active;
+  update public.chaos_profiles set endless_best=greatest(endless_best,r.endless_wave) where id=r.host and exists(select 1 from chaos_private.moves where room_id=r.id and player=r.host);
+ end if;
+ return r;
+end;$$;
+
+alter function chaos_private.life_snapshot(public.chaos_rooms,uuid) rename to life_snapshot_v8;
+create function chaos_private.life_snapshot(r public.chaos_rooms,u uuid) returns jsonb language plpgsql set search_path='' as $$
+declare d jsonb;run chaos_private.endless_runs;actual_xp integer;actual_coins integer;
+begin
+ d:=chaos_private.life_snapshot_v8(r,u);
+ select xp,coins into actual_xp,actual_coins from chaos_private.rewards where room_id=r.id and match_no=r.match_no and player=u;
+ if actual_xp is not null then d:=d||jsonb_build_object('rewards',jsonb_build_object('xp',actual_xp,'coins',actual_coins,'total_xp',(select xp from public.chaos_profiles where id=u)));end if;
+ if r.game_mode='endless' then
+  select * into run from chaos_private.endless_runs where room_id=r.id and player=u;
+  d:=d||jsonb_build_object('endless',jsonb_build_object('id',run.id,'wave',r.endless_wave,'defeated',run.defeated,'coins',run.coins,'xp',run.xp,'hp',r.host_hp,
+   'best',(select endless_best from public.chaos_profiles where id=u),'new_record',(select endless_best>run.previous_best from public.chaos_profiles where id=u),'active',run.active));
+ end if;return d;
+end;$$;
+
+-- Persist wave configuration when the shared state machine advances.
+do $$declare definition text;begin
+ definition:=pg_get_functiondef('public.chaos_action(text,text,text,integer,integer,integer)'::regprocedure);
+ definition:=replace(definition,'host_missed=r.host_missed,guest_missed=r.guest_missed,end_reason=r.end_reason where id=r.id;',
+ 'host_missed=r.host_missed,guest_missed=r.guest_missed,end_reason=r.end_reason,endless_wave=r.endless_wave,guest_max_hp=r.guest_max_hp,reward_xp=r.reward_xp,reward_coins=r.reward_coins where id=r.id;');
+ definition:=replace(definition,'and x.phase<>''finished'';',
+ 'and (x.phase<>''finished'' or (x.game_mode=''endless'' and x.match_winner=x.host and x.end_reason=''knockout''));');
+ execute definition;
+end;$$;
+alter function public.chaos_action(text,text,text,integer,integer,integer) rename to chaos_action_v8;
+alter function public.chaos_action_v8(text,text,text,integer,integer,integer) set schema chaos_private;
+
+create function public.chaos_endless(action text default 'state') returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();p public.chaos_profiles;run chaos_private.endless_runs;r public.chaos_rooms;d jsonb;
+begin
+ select * into p from public.chaos_profiles where id=u;
+ if p.id is null then raise exception 'Bitte zuerst dein Profil einrichten';end if;
+ if action='start' then
+  -- Session assignment serializes starts; another tab cannot reset surviving HP.
+  select * into run from chaos_private.endless_runs where player=u and active;
+  if run.id is not null then
+   select * into r from public.chaos_rooms where id=run.room_id;
+   if r.id is not null and r.updated_at>clock_timestamp()-interval '24 hours' then return public.chaos_action('ping',r.code);end if;
+   update chaos_private.endless_runs set active=false,finished_at=clock_timestamp() where id=run.id;
+  end if;
+  d:=public.chaos_action('bot');select * into r from public.chaos_rooms where id=(d->'room'->>'id')::uuid;
+  insert into chaos_private.endless_runs(player,room_id,previous_best) values(u,r.id,p.endless_best);
+  update public.chaos_rooms set game_mode='endless',host_hp=10,host_max_hp=10,guest_hp=1,guest_max_hp=1,
+   guest_name=chaos_private.endless_name(1),reward_coins=chaos_private.endless_coins(1),reward_xp=chaos_private.endless_xp(1) where id=r.id returning * into r;
+  return public.chaos_action('state',r.code);
+ elsif action<>'state' then raise exception 'Ungültige Aktion';end if;
+ return jsonb_build_object('best',p.endless_best,
+  'active',coalesce((select jsonb_build_object('code',x.code,'wave',x.endless_wave) from chaos_private.endless_runs er join public.chaos_rooms x on x.id=er.room_id where er.player=u and er.active),'null'::jsonb),
+  'history',coalesce((select jsonb_agg(to_jsonb(history)) from (select current_wave as wave,defeated,coins,xp,final_hp,created_at,finished_at from chaos_private.endless_runs where player=u and not active order by created_at desc limit 10) history),'[]'::jsonb),
+  'leaderboard',coalesce((select jsonb_agg(to_jsonb(ranked)) from (select id,name,appearance,frame,xp,endless_best as wave from public.chaos_profiles where endless_best>0 order by endless_best desc,name,id limit 50) ranked),'[]'::jsonb));
+end;$$;
+
+create function public.chaos_action(action text,room_code text default null,player_name text default null,choice integer default null,expected_round integer default null,expected_match integer default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();r public.chaos_rooms;
+begin
+ if action in('ready','leave') then
+  select * into r from public.chaos_rooms where code=upper(trim(room_code)) for update;
+  if r.game_mode='endless' then
+   if u<>r.host then raise exception 'Kein Zugriff auf diesen Lauf';end if;
+   if action='ready' then
+    if r.phase<>'finished' then raise exception 'Der Lauf läuft noch';end if;
+    if r.match_winner=r.host and r.end_reason='knockout' then return chaos_private.chaos_action_v8('state',r.code);end if;
+    return public.chaos_endless('start');
+   end if;
+   -- Leaving an inter-wave victory closes the run without undoing earned drops.
+   if r.phase='finished' and r.match_winner=r.host then
+    update public.chaos_rooms set match_winner=null,end_reason='abandoned',updated_at=clock_timestamp() where id=r.id;
+    update chaos_private.endless_runs set active=false,finished_at=clock_timestamp() where room_id=r.id and active;
+   end if;
+  end if;
+ end if;
+ return chaos_private.chaos_action_v8(action,room_code,player_name,choice,expected_round,expected_match);
+end;$$;
+revoke all on function public.chaos_action(text,text,text,integer,integer,integer),public.chaos_endless(text) from public,anon;
+grant execute on function public.chaos_action(text,text,text,integer,integer,integer),public.chaos_endless(text) to authenticated;
+revoke all on all functions in schema chaos_private from public,anon,authenticated;
+
+
+-- 010_ranked_queue.sql
+
+alter table public.chaos_profiles add column rating integer not null default 1000 check(rating>=0);
+alter table public.chaos_profiles add column ranked_matches integer not null default 0;
+alter table public.chaos_profiles add column ranked_wins integer not null default 0;
+alter table public.chaos_rooms drop constraint chaos_rooms_game_mode_check;
+alter table public.chaos_rooms add check(game_mode in('duel','endless','ranked'));
+alter table public.chaos_rooms add column battle_starts_at timestamptz;
+create table chaos_private.match_queue(
+ player uuid primary key references public.chaos_profiles on delete cascade,
+ rating integer not null,joined_at timestamptz not null default clock_timestamp(),
+ heartbeat timestamptz not null default clock_timestamp(),room_id uuid references public.chaos_rooms on delete set null
+);
+create table chaos_private.rating_results(
+ room_id uuid not null,match_no integer not null,host uuid not null,guest uuid not null,
+ host_before integer not null,guest_before integer not null,host_after integer not null,guest_after integer not null,
+ winner uuid,finished_at timestamptz not null default clock_timestamp(),primary key(room_id,match_no)
+);
+alter table chaos_private.match_queue enable row level security;
+alter table chaos_private.rating_results enable row level security;
+revoke all on chaos_private.match_queue,chaos_private.rating_results from public,anon,authenticated;
+create index match_queue_waiting on chaos_private.match_queue(joined_at) where room_id is null;
+create index ranked_results_host on chaos_private.rating_results(host,finished_at desc);
+create index ranked_results_guest on chaos_private.rating_results(guest,finished_at desc);
+create function chaos_private.rank_name(mmr integer) returns text language sql immutable set search_path='' as $$
+ select case when mmr<1000 then 'Bronze' when mmr<1200 then 'Silber' when mmr<1400 then 'Gold' when mmr<1600 then 'Platin' when mmr<1800 then 'Diamant' when mmr<2000 then 'Meister' when mmr<2200 then 'Legende' else 'Chaos-Gott' end;
+$$;
+create function chaos_private.update_rating() returns trigger language plpgsql security definer set search_path='' as $$
+declare h integer;g integer;delta integer;s numeric;
+begin
+ if new.game_mode<>'ranked' or new.phase<>'finished' or (old.phase='finished' and old.match_no=new.match_no) or new.end_reason='abandoned' then return new;end if;
+ -- A match with no deliberate input has no rating or leaderboard significance.
+ if not exists(select 1 from chaos_private.moves where room_id=new.id and match_no=new.match_no) then return new;end if;
+ perform id from public.chaos_profiles where id in(new.host,new.guest) order by id for update;
+ select rating into h from public.chaos_profiles where id=new.host;
+ select rating into g from public.chaos_profiles where id=new.guest;
+ s:=case when new.match_winner=new.host then 1 when new.match_winner=new.guest then 0 else .5 end;
+ delta:=round(32*(s-1/(1+power(10::numeric,(g-h)/400::numeric))))::integer;
+ insert into chaos_private.rating_results(room_id,match_no,host,guest,host_before,guest_before,host_after,guest_after,winner)
+ values(new.id,new.match_no,new.host,new.guest,h,g,greatest(0,h+delta),greatest(0,g-delta),new.match_winner) on conflict do nothing;
+ if found then
+  update public.chaos_profiles set rating=greatest(0,rating+case when id=new.host then delta else -delta end),ranked_matches=ranked_matches+1,ranked_wins=ranked_wins+case when id=new.match_winner then 1 else 0 end where id in(new.host,new.guest);
+ end if;return new;
+end;$$;
+create trigger ranked_match_rating after update on public.chaos_rooms for each row execute function chaos_private.update_rating();
+
+-- Joining another mode cancels a waiting ticket. An assigned ranked room stays in sessions.
+alter function chaos_private.claim_session(uuid,uuid) rename to claim_session_v9;
+create function chaos_private.claim_session(u uuid,requested uuid default null) returns void language plpgsql set search_path='' as $$
+begin perform chaos_private.claim_session_v9(u,requested);delete from chaos_private.match_queue where player=u and room_id is null;end;$$;
+
+create function public.chaos_matchmaking(action text default 'poll') returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();mine chaos_private.match_queue;peer chaos_private.match_queue;
+ r public.chaos_rooms;p public.chaos_profiles;q public.chaos_profiles;candidate text;waited integer;spread integer;i integer;j integer;
+ alphabet text:='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+begin
+ if action not in('join','poll','cancel') then raise exception 'Ungültige Suchaktion';end if;
+ -- A short global transaction lock makes matching/cancellation/assignment indivisible.
+ perform pg_advisory_xact_lock(6014010);
+ select * into p from public.chaos_profiles where id=u;if p.id is null then raise exception 'Bitte zuerst dein Profil einrichten';end if;
+ select * into mine from chaos_private.match_queue where player=u;
+ if mine.room_id is not null then
+  select * into r from public.chaos_rooms where id=mine.room_id;
+  if r.phase<>'finished' then return jsonb_build_object('status','matched','code',r.code,'starts_at',r.battle_starts_at);end if;
+  delete from chaos_private.match_queue where player=u;mine:=null;
+ end if;
+ if action='cancel' then delete from chaos_private.match_queue where player=u;return jsonb_build_object('status','idle');end if;
+ delete from chaos_private.match_queue where room_id is null and heartbeat<clock_timestamp()-interval '30 seconds';
+ select * into mine from chaos_private.match_queue where player=u;
+ if mine.player is null then
+  if action='poll' then return jsonb_build_object('status','idle');end if;
+  perform chaos_private.claim_session(u);
+  insert into chaos_private.match_queue(player,rating) values(u,p.rating) returning * into mine;
+ end if;
+ update chaos_private.match_queue set heartbeat=clock_timestamp() where player=u;
+ waited:=greatest(0,extract(epoch from(clock_timestamp()-mine.joined_at))::integer);
+ spread:=least(2000,100+(waited/15)*100);
+ select x.* into peer from chaos_private.match_queue x join public.chaos_profiles cp on cp.id=x.player where x.player<>u and x.room_id is null and x.heartbeat>clock_timestamp()-interval '30 seconds'
+  and abs(x.rating-mine.rating)<=greatest(spread,least(2000,100+(extract(epoch from(clock_timestamp()-x.joined_at))::integer/15)*100))
+  and abs(cp.xp/250-p.xp/250)<=3+greatest(waited,extract(epoch from(clock_timestamp()-x.joined_at))::integer)/30
+  order by x.joined_at,abs(cp.xp/250-p.xp/250),x.player limit 1;
+ if peer.player is null then return jsonb_build_object('status','waiting','joined_at',mine.joined_at,'range',spread,'rating',p.rating,'rank',chaos_private.rank_name(p.rating));end if;
+ -- Reserve both real accounts before creating a room; stale tickets cannot steal an active player.
+ insert into chaos_private.sessions(player) values(u),(peer.player) on conflict do nothing;
+ perform player from chaos_private.sessions where player in(u,peer.player) order by player for update;
+ if exists(select 1 from chaos_private.sessions s join public.chaos_rooms x on x.id=s.room_id where s.player in(u,peer.player) and x.phase<>'finished') then
+  delete from chaos_private.match_queue x using chaos_private.sessions s,public.chaos_rooms z where x.player=s.player and s.room_id=z.id and z.phase<>'finished' and x.room_id is null;
+  return jsonb_build_object('status','waiting','joined_at',mine.joined_at,'range',spread,'rating',p.rating,'rank',chaos_private.rank_name(p.rating));
+ end if;
+ select * into q from public.chaos_profiles where id=peer.player;
+ for i in 1..20 loop
+  candidate:='';for j in 1..6 loop candidate:=candidate||substr(alphabet,1+floor(random()*length(alphabet))::integer,1);end loop;
+  begin
+   insert into public.chaos_rooms(code,host,host_name,guest,guest_name,guest_seen,host_seen,game_mode,phase,battle_starts_at,select_until)
+   values(candidate,peer.player,q.name,u,p.name,clock_timestamp(),clock_timestamp(),'ranked','select',clock_timestamp()+interval '4 seconds',clock_timestamp()+interval '14 seconds') returning * into r;exit;
+  exception when unique_violation then null;end;
+ end loop;
+ if r.id is null then raise exception 'Arena konnte nicht reserviert werden';end if;
+ update chaos_private.sessions set room_id=r.id where player in(u,peer.player);
+ update chaos_private.match_queue set room_id=r.id where player in(u,peer.player);
+ return jsonb_build_object('status','matched','code',r.code,'starts_at',r.battle_starts_at);
+end;$$;
+
+alter function public.chaos_action(text,text,text,integer,integer,integer) rename to chaos_action_v9;
+alter function public.chaos_action_v9(text,text,text,integer,integer,integer) set schema chaos_private;
+create function public.chaos_action(action text,room_code text default null,player_name text default null,choice integer default null,expected_round integer default null,expected_match integer default null) returns jsonb language plpgsql security definer set search_path='' as $$
+declare r public.chaos_rooms;u uuid:=chaos_private.account_uid();
+begin
+ if action in('choose','confirm') then
+  select * into r from public.chaos_rooms where code=upper(trim(room_code));
+  if r.game_mode='ranked' and clock_timestamp()<r.battle_starts_at then
+   if u<>r.host and u is distinct from r.guest then raise exception 'Kein Zugriff auf diesen Raum';end if;
+   raise exception 'Der Kampf beginnt gleich';
+  end if;
+ end if;
+ return chaos_private.chaos_action_v9(action,room_code,player_name,choice,expected_round,expected_match);
+end;$$;
+
+create function public.chaos_rankings(scope text default 'global') returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();p public.chaos_profiles;
+begin
+ if scope not in('global','friends') then raise exception 'Ungültige Rangliste';end if;
+ select * into p from public.chaos_profiles where id=u;
+ return jsonb_build_object('rating',p.rating,'rank',chaos_private.rank_name(p.rating),'matches',p.ranked_matches,'wins',p.ranked_wins,
+ 'players',coalesce((select jsonb_agg(to_jsonb(t)) from(select id,name,appearance,frame,xp,rating,ranked_wins,ranked_matches,chaos_private.rank_name(rating) rank from public.chaos_profiles x where ranked_matches>0 and (scope='global' or x.id=u or exists(select 1 from public.chaos_friends f where f.status='accepted' and ((f.requester=u and f.receiver=x.id) or(f.receiver=u and f.requester=x.id)))) order by rating desc,ranked_wins desc,id limit 100)t),'[]'::jsonb),
+ 'history',coalesce((select jsonb_agg(to_jsonb(t)) from(select room_id,match_no,case when host=u then host_before else guest_before end before,case when host=u then host_after else guest_after end after,winner=u won,finished_at from chaos_private.rating_results where u in(host,guest) order by finished_at desc limit 20)t),'[]'::jsonb));
+end;$$;
+revoke all on function public.chaos_matchmaking(text),public.chaos_rankings(text),public.chaos_action(text,text,text,integer,integer,integer) from public,anon;
+grant execute on function public.chaos_matchmaking(text),public.chaos_rankings(text),public.chaos_action(text,text,text,integer,integer,integer) to authenticated;
+revoke all on all functions in schema chaos_private from public,anon,authenticated;
+
+
+-- 011_private_chat.sql
+
+create table chaos_private.blocks(blocker uuid not null references public.chaos_profiles on delete cascade,blocked uuid not null references public.chaos_profiles on delete cascade,created_at timestamptz not null default clock_timestamp(),primary key(blocker,blocked),check(blocker<>blocked));
+create table public.chaos_messages(id uuid primary key default gen_random_uuid(),sender uuid not null references public.chaos_profiles on delete cascade,receiver uuid not null references public.chaos_profiles on delete cascade,body text not null check(length(trim(body)) between 1 and 500),nonce uuid not null,created_at timestamptz not null default clock_timestamp(),read_at timestamptz,unique(sender,nonce),check(sender<>receiver));
+create table chaos_private.message_reports(reporter uuid not null references public.chaos_profiles on delete cascade,message_id uuid not null references public.chaos_messages on delete cascade,reason text not null check(reason in('spam','abuse','inappropriate')),created_at timestamptz not null default clock_timestamp(),primary key(reporter,message_id));
+alter table chaos_private.blocks enable row level security;
+alter table chaos_private.message_reports enable row level security;
+alter table public.chaos_messages enable row level security;
+revoke all on chaos_private.blocks,chaos_private.message_reports,public.chaos_messages from public,anon,authenticated;
+grant select on public.chaos_messages to authenticated;
+create index messages_pair on public.chaos_messages(least(sender,receiver),greatest(sender,receiver),created_at desc);
+create index messages_unread on public.chaos_messages(receiver,sender) where read_at is null;
+create index messages_spam on public.chaos_messages(sender,created_at desc);
+create function chaos_private.friends_allowed(a uuid,b uuid) returns boolean language sql stable security definer set search_path='' as $$
+ select a<>b and exists(select 1 from public.chaos_friends where status='accepted' and ((requester=a and receiver=b)or(requester=b and receiver=a))) and not exists(select 1 from chaos_private.blocks where (blocker=a and blocked=b)or(blocker=b and blocked=a));
+$$;
+-- This narrow predicate is callable by RLS, never a source of profile or message data.
+revoke all on function chaos_private.friends_allowed(uuid,uuid) from public,anon,authenticated;
+create function public.chaos_chat_visible(a uuid,b uuid) returns boolean language sql stable security definer set search_path='' as $$select auth.uid() in(a,b) and chaos_private.friends_allowed(a,b);$$;
+revoke all on function public.chaos_chat_visible(uuid,uuid) from public,anon;
+grant execute on function public.chaos_chat_visible(uuid,uuid) to authenticated;
+create policy message_members on public.chaos_messages for select to authenticated using(public.chaos_chat_visible(sender,receiver));
+alter publication supabase_realtime add table public.chaos_messages;
+
+create function public.chaos_chat(action text,target uuid default null,message text default null,request_id uuid default null,message_id uuid default null) returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();existing public.chaos_messages;cutoff timestamptz;d jsonb;
+begin
+ if action='report' then
+  select * into existing from public.chaos_messages where id=message_id and receiver=u;
+  if existing.id is null or message not in('spam','abuse','inappropriate') then raise exception 'Ungültige Meldung';end if;
+  insert into chaos_private.message_reports values(u,existing.id,message,clock_timestamp()) on conflict do nothing;
+  return jsonb_build_object('reported',true);
+ elsif action in('block','unblock') then
+  if target is null or target=u or not exists(select 1 from public.chaos_friends where (requester=u and receiver=target)or(requester=target and receiver=u)) then raise exception 'Spieler nicht verfügbar';end if;
+  if action='block' then
+   insert into chaos_private.blocks(blocker,blocked) values(u,target) on conflict do nothing;
+   update public.chaos_challenges set status='declined' where status='pending' and ((sender=u and receiver=target)or(sender=target and receiver=u));
+  else delete from chaos_private.blocks where blocker=u and blocked=target;end if;
+  return jsonb_build_object('blocked',action='block');
+ elsif action not in('state','send','older') then raise exception 'Ungültige Chataktion';end if;
+ if not chaos_private.friends_allowed(u,target) then raise exception 'Chat ist nur zwischen bestätigten, nicht blockierten Freunden möglich';end if;
+ if action='send' then
+  if request_id is null or message is null or length(trim(message)) not between 1 and 500 then raise exception 'Nachricht muss 1 bis 500 Zeichen lang sein';end if;
+  perform pg_advisory_xact_lock(hashtextextended(u::text,6014011));
+  select * into existing from public.chaos_messages where sender=u and nonce=request_id;
+  if existing.id is not null then
+   if existing.receiver<>target or existing.body<>trim(message) then raise exception 'Diese Sende-ID wurde bereits verwendet';end if;
+  else
+   if exists(select 1 from public.chaos_messages where sender=u and created_at>clock_timestamp()-interval '750 milliseconds') or (select count(*) from public.chaos_messages where sender=u and created_at>clock_timestamp()-interval '1 minute')>=20 then raise exception 'Bitte kurz warten. Maximal 20 Nachrichten pro Minute.';end if;
+   insert into public.chaos_messages(sender,receiver,body,nonce) values(u,target,trim(message),request_id);
+  end if;
+ end if;
+ if action='older' then select created_at into cutoff from public.chaos_messages where id=message_id and ((sender=u and receiver=target)or(sender=target and receiver=u));if cutoff is null then raise exception 'Ungültige Verlaufsseite';end if;end if;
+ update public.chaos_messages set read_at=clock_timestamp() where receiver=u and sender=target and read_at is null;
+ select coalesce(jsonb_agg(to_jsonb(t) order by t.created_at,t.id),'[]'::jsonb) into d from(select id,sender,receiver,body,created_at,read_at from public.chaos_messages where ((sender=u and receiver=target)or(sender=target and receiver=u)) and (cutoff is null or (created_at,id)<(cutoff,message_id)) order by created_at desc,id desc limit 50)t;
+ return jsonb_build_object('messages',d,'has_more',jsonb_array_length(d)=50);
+end;$$;
+
+create function public.chaos_community() returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();
+begin
+ update public.chaos_profiles set last_seen=clock_timestamp() where id=u;
+ return jsonb_build_object('friends',coalesce((select jsonb_agg(to_jsonb(t)) from(select f.id,f.status,f.receiver=u incoming,p.id player,p.name,p.avatar,p.appearance,p.frame,p.xp,p.rating,
+ case when p.last_seen<clock_timestamp()-interval '60 seconds' then 'offline' when exists(select 1 from chaos_private.sessions s join public.chaos_rooms r on r.id=s.room_id where s.player=p.id and r.phase<>'finished') then 'battle' else 'online' end presence,
+ (select count(*) from public.chaos_messages where sender=p.id and receiver=u and read_at is null) unread
+ from public.chaos_friends f join public.chaos_profiles p on p.id=case when f.requester=u then f.receiver else f.requester end where u in(f.requester,f.receiver) and not exists(select 1 from chaos_private.blocks b where (b.blocker=u and b.blocked=p.id)or(b.blocker=p.id and b.blocked=u)))t),'[]'::jsonb),
+ 'blocked',coalesce((select jsonb_agg(jsonb_build_object('id',p.id,'name',p.name)) from chaos_private.blocks b join public.chaos_profiles p on p.id=b.blocked where b.blocker=u),'[]'::jsonb),
+ 'challenges',coalesce((select jsonb_agg(jsonb_build_object('id',c.id,'incoming',c.receiver=u,'player',p.id,'name',p.name,'appearance',p.appearance,'frame',p.frame,'status',c.status,'expires_at',c.expires_at,'code',r.code,'phase',r.phase))
+ from public.chaos_challenges c join public.chaos_profiles p on p.id=case when c.sender=u then c.receiver else c.sender end join public.chaos_rooms r on r.id=c.room_id
+ where u in(c.sender,c.receiver) and c.expires_at>clock_timestamp() and chaos_private.friends_allowed(c.sender,c.receiver) and ((c.status='pending' and r.phase='lobby')or(c.status in('accepted','declined') and c.created_at>clock_timestamp()-interval '10 minutes'))),'[]'::jsonb));
+end;$$;
+
+alter function public.chaos_social(text,text,integer,text,uuid,text) rename to chaos_social_v7;
+alter function public.chaos_social_v7(text,text,integer,text,uuid,text) set schema chaos_private;
+create function public.chaos_social(action text,display_name text default null,avatar_id integer default null,friend_code text default null,target_id uuid default null,item_id text default null) returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();other uuid;d jsonb;r public.chaos_rooms;
+begin
+ if action='add_friend' then select id into other from public.chaos_profiles where public.chaos_profiles.friend_code=upper(trim(chaos_social.friend_code));
+ elsif action='challenge' then other:=target_id;
+ elsif action='accept_challenge' then select sender into other from public.chaos_challenges where id=target_id;end if;
+ if other is not null and exists(select 1 from chaos_private.blocks where (blocker=u and blocked=other)or(blocker=other and blocked=u)) then raise exception 'Spieler nicht verfügbar';end if;
+ d:=chaos_private.chaos_social_v7(action,display_name,avatar_id,friend_code,target_id,item_id);
+ if action='accept_challenge' and d->'game'->'room' is not null then
+  select * into r from public.chaos_rooms where id=(d->'game'->'room'->>'id')::uuid for update;
+  if r.phase='lobby' and r.guest=u then
+   update public.chaos_rooms set phase='select',select_until=clock_timestamp()+interval '10 seconds',updated_at=clock_timestamp() where id=r.id;
+   d:=jsonb_set(d,'{game}',public.chaos_action('ping',r.code));
+  end if;
+ end if;return d;
+end;$$;
+revoke all on function public.chaos_chat(text,uuid,text,uuid,uuid),public.chaos_community(),public.chaos_social(text,text,integer,text,uuid,text) from public,anon;
+grant execute on function public.chaos_chat(text,uuid,text,uuid,uuid),public.chaos_community(),public.chaos_social(text,text,integer,text,uuid,text) to authenticated;
+revoke all on all functions in schema chaos_private from public,anon,authenticated;
+
+
+-- 012_chat_unblock.sql
+
+-- A user may undo their own block even after the friendship was removed.
+create or replace function public.chaos_chat(action text,target uuid default null,message text default null,request_id uuid default null,message_id uuid default null) returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();existing public.chaos_messages;cutoff timestamptz;d jsonb;
+begin
+ if action='report' then
+  select * into existing from public.chaos_messages where id=message_id and receiver=u;
+  if existing.id is null or message not in('spam','abuse','inappropriate') then raise exception 'Ungültige Meldung';end if;
+  insert into chaos_private.message_reports values(u,existing.id,message,clock_timestamp()) on conflict do nothing;
+  return jsonb_build_object('reported',true);
+ elsif action in('block','unblock') then
+  if target is null or target=u or (not exists(select 1 from public.chaos_friends where (requester=u and receiver=target)or(requester=target and receiver=u)) and not (action='unblock' and exists(select 1 from chaos_private.blocks where blocker=u and blocked=target))) then raise exception 'Spieler nicht verfügbar';end if;
+  if action='block' then
+   insert into chaos_private.blocks(blocker,blocked) values(u,target) on conflict do nothing;
+   update public.chaos_challenges set status='declined' where status='pending' and ((sender=u and receiver=target)or(sender=target and receiver=u));
+  else delete from chaos_private.blocks where blocker=u and blocked=target;end if;
+  return jsonb_build_object('blocked',action='block');
+ elsif action not in('state','send','older') then raise exception 'Ungültige Chataktion';end if;
+ if not chaos_private.friends_allowed(u,target) then raise exception 'Chat ist nur zwischen bestätigten, nicht blockierten Freunden möglich';end if;
+ if action='send' then
+  if request_id is null or message is null or length(trim(message)) not between 1 and 500 then raise exception 'Nachricht muss 1 bis 500 Zeichen lang sein';end if;
+  perform pg_advisory_xact_lock(hashtextextended(u::text,6014011));
+  select * into existing from public.chaos_messages where sender=u and nonce=request_id;
+  if existing.id is not null then
+   if existing.receiver<>target or existing.body<>trim(message) then raise exception 'Diese Sende-ID wurde bereits verwendet';end if;
+  else
+   if exists(select 1 from public.chaos_messages where sender=u and created_at>clock_timestamp()-interval '750 milliseconds') or (select count(*) from public.chaos_messages where sender=u and created_at>clock_timestamp()-interval '1 minute')>=20 then raise exception 'Bitte kurz warten. Maximal 20 Nachrichten pro Minute.';end if;
+   insert into public.chaos_messages(sender,receiver,body,nonce) values(u,target,trim(message),request_id);
+  end if;
+ end if;
+ if action='older' then select created_at into cutoff from public.chaos_messages where id=message_id and ((sender=u and receiver=target)or(sender=target and receiver=u));if cutoff is null then raise exception 'Ungültige Verlaufsseite';end if;end if;
+ update public.chaos_messages set read_at=clock_timestamp() where receiver=u and sender=target and read_at is null;
+ select coalesce(jsonb_agg(to_jsonb(t) order by t.created_at,t.id),'[]'::jsonb) into d from(select id,sender,receiver,body,created_at,read_at from public.chaos_messages where ((sender=u and receiver=target)or(sender=target and receiver=u)) and (cutoff is null or (created_at,id)<(cutoff,message_id)) order by created_at desc,id desc limit 50)t;
+ return jsonb_build_object('messages',d,'has_more',jsonb_array_length(d)=50);
+end;$$;
+revoke all on function public.chaos_chat(text,uuid,text,uuid,uuid) from public,anon;
+grant execute on function public.chaos_chat(text,uuid,text,uuid,uuid) to authenticated;
+
+
+-- 013_character_editor.sql
+
+-- New free appearance fields; no inventory or account data is replaced.
+create or replace function chaos_private.chaos_style_v6(action text,appearance jsonb default null,item_id text default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();p public.chaos_profiles;s chaos_private.styles;k text;v text;normalized jsonb;slot_name text;
+begin
+ select * into p from public.chaos_profiles where id=u for update;
+ if p.id is null then raise exception 'Bitte zuerst dein Profil einrichten'; end if;
+ if action='appearance' then
+  if appearance is null or jsonb_typeof(appearance)<>'object' or octet_length(appearance::text)>2048 then raise exception 'Aussehen ungültig'; end if;
+  normalized:=p.appearance;
+  for k,v in select key,value from jsonb_each_text(appearance) loop
+   if k in ('skin','hairColor','eyes','outfitColor','lipColor','pantsColor','bootColor') then
+    if v is null or v !~ '^#[a-fA-F0-9]{6}$' then raise exception 'Farbe ungültig'; end if;
+   elsif k='body' then
+    if v is null or v not in ('masculine','feminine','androgynous') then raise exception 'Körper ungültig'; end if;
+   elsif k='hair' then
+    if v is null or v not in ('swept','crop','curls','long','bob','braids','bun','bald','pixie','waves','ponytail','high-pony','twin-tails','mohawk','undercut','dreads','afro','sidebraid','shag','topknot') then raise exception 'Frisur ungültig'; end if;
+   elsif k='face' then
+    if v is null or v not in ('soft','angular','round') then raise exception 'Gesicht ungültig'; end if;
+   elsif k='brows' then
+    if v is null or v not in ('natural','bold','arched','straight') then raise exception 'Augenbrauen ungültig'; end if;
+   elsif k='beard' then
+    if v is null or v not in ('none','stubble','full','goatee','moustache') then raise exception 'Bart ungültig'; end if;
+   elsif k='build' then if v is null or v not in('slim','athletic','broad') then raise exception 'Statur ungültig';end if;
+   elsif k='height' then if v is null or v not in('short','average','tall') then raise exception 'Größe ungültig';end if;
+   elsif k='eyeShape' then if v is null or v not in('almond','round','sharp') then raise exception 'Augenform ungültig';end if;
+   elsif k='nose' then if v is null or v not in('small','straight','wide') then raise exception 'Nase ungültig';end if;
+   elsif k='mouth' then if v is null or v not in('neutral','smile','serious','full') then raise exception 'Mund ungültig';end if;
+   elsif k='freckles' then if v is null or v not in('none','light','many') then raise exception 'Sommersprossen ungültig';end if;
+   elsif k='scar' then if v is null or v not in('none','cheek','brow') then raise exception 'Narbe ungültig';end if;
+   elsif k='glasses' then if v is null or v not in('none','round','square') then raise exception 'Brille ungültig';end if;
+   elsif k='earrings' then if v is null or v not in('none','studs','hoops') then raise exception 'Ohrringe ungültig';end if;
+   elsif k in ('outfit','hat','aura') then
+    -- Appearance editing cannot grant or equip paid cosmetics.
+    if v is distinct from p.appearance->>k then raise exception 'Styles bitte über die Sammlung ausrüsten'; end if;
+   else raise exception 'Unbekannte Aussehensoption'; end if;
+   normalized:=jsonb_set(normalized,array[k],to_jsonb(v));
+  end loop;
+  update public.chaos_profiles set appearance=normalized where id=u;
+ elsif action='buy' then
+  select * into s from chaos_private.styles where id=item_id;
+  if s.id is null then raise exception 'Shopartikel nicht gefunden'; end if;
+  if exists(select 1 from chaos_private.inventory where player=u and item=item_id) then raise exception 'Artikel gehört dir bereits'; end if;
+  if p.coins<s.price then raise exception 'Nicht genügend Coins'; end if;
+  insert into chaos_private.inventory values(u,item_id);
+  update public.chaos_profiles set coins=coins-s.price where id=u;
+ elsif action='equip' then
+  if item_id in ('outfit:reset','hat:reset','aura:reset') then
+   slot_name:=split_part(item_id,':',1);
+   update public.chaos_profiles set appearance=jsonb_set(public.chaos_profiles.appearance,array[slot_name],to_jsonb(case when slot_name='outfit' then 'starter' else 'none' end)) where id=u;
+  elsif item_id='basic' then update public.chaos_profiles set frame='basic' where id=u;
+  else
+   select * into s from chaos_private.styles where id=item_id;
+   if s.id is null or not exists(select 1 from chaos_private.inventory where player=u and item=item_id) then raise exception 'Diesen Style besitzt du nicht'; end if;
+   if s.slot='frame' then update public.chaos_profiles set frame=s.id where id=u;
+   else update public.chaos_profiles set appearance=jsonb_set(public.chaos_profiles.appearance,array[s.slot],to_jsonb(s.id)) where id=u; end if;
+  end if;
+ elsif action<>'state' then raise exception 'Ungültige Aktion'; end if;
+ return public.chaos_social('state');
+end;
+$$;
+revoke all on all functions in schema chaos_private from public,anon,authenticated;
+
+
+-- 014_character_details.sql
+
+-- Additional free appearance details; existing looks remain valid.
+create or replace function chaos_private.chaos_style_v6(action text,appearance jsonb default null,item_id text default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();p public.chaos_profiles;s chaos_private.styles;k text;v text;normalized jsonb;slot_name text;
+begin
+ select * into p from public.chaos_profiles where id=u for update;
+ if p.id is null then raise exception 'Bitte zuerst dein Profil einrichten'; end if;
+ if action='appearance' then
+  if appearance is null or jsonb_typeof(appearance)<>'object' or octet_length(appearance::text)>2048 then raise exception 'Aussehen ungültig'; end if;
+  normalized:=p.appearance;
+  for k,v in select key,value from jsonb_each_text(appearance) loop
+   if k in ('skin','hairColor','eyes','outfitColor','lipColor','trimColor','paintColor','pantsColor','bootColor') then
+    if v is null or v !~ '^#[a-fA-F0-9]{6}$' then raise exception 'Farbe ungültig'; end if;
+   elsif k='body' then
+    if v is null or v not in ('masculine','feminine','androgynous') then raise exception 'Körper ungültig'; end if;
+   elsif k='hair' then
+    if v is null or v not in ('swept','crop','curls','long','bob','braids','bun','bald','pixie','waves','ponytail','high-pony','twin-tails','mohawk','undercut','dreads','afro','sidebraid','shag','topknot') then raise exception 'Frisur ungültig'; end if;
+   elsif k='face' then
+    if v is null or v not in ('soft','angular','round') then raise exception 'Gesicht ungültig'; end if;
+   elsif k='brows' then
+    if v is null or v not in ('natural','bold','arched','straight') then raise exception 'Augenbrauen ungültig'; end if;
+   elsif k='beard' then
+    if v is null or v not in ('none','stubble','full','goatee','moustache') then raise exception 'Bart ungültig'; end if;
+   elsif k='build' then if v is null or v not in('slim','athletic','broad') then raise exception 'Statur ungültig';end if;
+   elsif k='height' then if v is null or v not in('short','average','tall') then raise exception 'Größe ungültig';end if;
+   elsif k='eyeShape' then if v is null or v not in('almond','round','sharp') then raise exception 'Augenform ungültig';end if;
+   elsif k='nose' then if v is null or v not in('small','straight','wide') then raise exception 'Nase ungültig';end if;
+   elsif k='mouth' then if v is null or v not in('neutral','smile','serious','full') then raise exception 'Mund ungültig';end if;
+   elsif k='facePaint' then if v is null or v not in('none','warrior','runes','sun') then raise exception 'Bemalung ungültig';end if;
+   elsif k='freckles' then if v is null or v not in('none','light','many') then raise exception 'Sommersprossen ungültig';end if;
+   elsif k='scar' then if v is null or v not in('none','cheek','brow') then raise exception 'Narbe ungültig';end if;
+   elsif k='glasses' then if v is null or v not in('none','round','square') then raise exception 'Brille ungültig';end if;
+   elsif k='earrings' then if v is null or v not in('none','studs','hoops') then raise exception 'Ohrringe ungültig';end if;
+   elsif k in ('outfit','hat','aura') then
+    -- Appearance editing cannot grant or equip paid cosmetics.
+    if v is distinct from p.appearance->>k then raise exception 'Styles bitte über die Sammlung ausrüsten'; end if;
+   else raise exception 'Unbekannte Aussehensoption'; end if;
+   normalized:=jsonb_set(normalized,array[k],to_jsonb(v));
+  end loop;
+  update public.chaos_profiles set appearance=normalized where id=u;
+ elsif action='buy' then
+  select * into s from chaos_private.styles where id=item_id;
+  if s.id is null then raise exception 'Shopartikel nicht gefunden'; end if;
+  if exists(select 1 from chaos_private.inventory where player=u and item=item_id) then raise exception 'Artikel gehört dir bereits'; end if;
+  if p.coins<s.price then raise exception 'Nicht genügend Coins'; end if;
+  insert into chaos_private.inventory values(u,item_id);
+  update public.chaos_profiles set coins=coins-s.price where id=u;
+ elsif action='equip' then
+  if item_id in ('outfit:reset','hat:reset','aura:reset') then
+   slot_name:=split_part(item_id,':',1);
+   update public.chaos_profiles set appearance=jsonb_set(public.chaos_profiles.appearance,array[slot_name],to_jsonb(case when slot_name='outfit' then 'starter' else 'none' end)) where id=u;
+  elsif item_id='basic' then update public.chaos_profiles set frame='basic' where id=u;
+  else
+   select * into s from chaos_private.styles where id=item_id;
+   if s.id is null or not exists(select 1 from chaos_private.inventory where player=u and item=item_id) then raise exception 'Diesen Style besitzt du nicht'; end if;
+   if s.slot='frame' then update public.chaos_profiles set frame=s.id where id=u;
+   else update public.chaos_profiles set appearance=jsonb_set(public.chaos_profiles.appearance,array[s.slot],to_jsonb(s.id)) where id=u; end if;
+  end if;
+ elsif action<>'state' then raise exception 'Ungültige Aktion'; end if;
+ return public.chaos_social('state');
+end;
+$$;
+revoke all on all functions in schema chaos_private from public,anon,authenticated;
+
+
+-- 015_cosmetic_catalog.sql
+
+-- Private catalogue staging only: no existing table, purchase function or permission changes.
+-- Items are not available for purchases or loot until a separately tested activation.
+create table chaos_private.cosmetic_catalog(
+ id text primary key,
+ slot text not null check(slot in('outfit','hat','aura','frame','card','weapon','emote','card-aura','attack','victory')),
+ name text not null,description text not null,color text not null check(color ~ '^#[a-fA-F0-9]{6}$'),
+ price integer not null check(price between 1 and 10000),rarity integer not null check(rarity between 0 and 4),
+ model text not null,power_index integer check(power_index between 0 and 6),theme text,
+ check((slot='card' and power_index is not null and theme is not null) or(slot<>'card' and power_index is null))
+);
+alter table chaos_private.cosmetic_catalog enable row level security;
+revoke all on chaos_private.cosmetic_catalog from public,anon,authenticated;
+insert into chaos_private.cosmetic_catalog values
+('outfit-umbra','outfit','Umbra-Mantel','Umbra-Mantel — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#71849e',650,2,'coat',null,null),('outfit-lumen','outfit','Lichtweber','Lichtweber — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#d5cba5',900,3,'robe',null,null),('outfit-runeguard','outfit','Runenpanzer','Runenpanzer — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#789da8',500,2,'armor',null,null),('outfit-nomad','outfit','Wanderer der Dünen','Wanderer der Dünen — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#ae8663',180,0,'poncho',null,null),('outfit-mist','outfit','Nebelkimono','Nebelkimono — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#a2adc7',350,1,'kimono',null,null),('outfit-ranger','outfit','Waldhüter','Waldhüter — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#7d9c75',400,1,'ranger',null,null),('outfit-orbit','outfit','Orbitaljacke','Orbitaljacke — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#a0b7d9',240,1,'bomber',null,null),('outfit-duelist','outfit','Klingenmeister','Klingenmeister — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#9b5368',1200,3,'duelist',null,null),('head-shade','hat','Schattenkapuze','Schattenkapuze — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#5e6b88',250,1,'hood',null,null),('head-witch','hat','Hexenkrone','Hexenkrone — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#9c80bf',600,2,'witch',null,null),('head-academy','hat','Akademie-Beret','Akademie-Beret — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#bc9f79',160,0,'beret',null,null),('head-visor','hat','Astralvisier','Astralvisier — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#8bd4e6',500,2,'visor',null,null),('head-antlers','hat','Geweih der Sterne','Geweih der Sterne — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#d9c49a',900,3,'antlers',null,null),('head-desert','hat','Wüstenturban','Wüstenturban — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#caa984',280,1,'turban',null,null),('aura-orbit','aura','Sternenbahn','Sternenbahn — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#a0c9f4',350,1,'orbit',null,null),('aura-runes','aura','Runenwache','Runenwache — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#b2a0e5',650,2,'runes',null,null),('aura-petals','aura','Blütenwirbel','Blütenwirbel — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#e9a5bc',450,1,'petals',null,null),('aura-storm','aura','Gewitterseele','Gewitterseele — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#9ae5ed',1100,3,'lightning',null,null),('aura-seraph','aura','Seraphenflügel','Seraphenflügel — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#f4dba5',1400,4,'wings',null,null),('weapon-lumen','weapon','Lumenklinge','Lumenklinge — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#e9d9ac',500,2,'sword',null,null),('weapon-archon','weapon','Archonstab','Archonstab — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#b7a4ed',800,3,'staff',null,null),('weapon-silver','weapon','Silberbogen','Silberbogen — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#a9c9dd',400,1,'bow',null,null),('weapon-night','weapon','Nachtdolch','Nachtdolch — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#798aa6',250,0,'dagger',null,null),('frame-runes','frame','Runensiegel','Runensiegel — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#96b6d2',350,1,'runes',null,null),('frame-solar','frame','Solarbogen','Solarbogen — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#e2c88e',700,2,'solar',null,null),('frame-prism','frame','Prismenring','Prismenring — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#d6a8e9',1500,4,'prism',null,null),('emote-greeting','emote','Sternengruß','Sternengruß — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#b4c8e2',120,0,'greeting',null,null),('emote-gg','emote','Ehrenvolles GG','Ehrenvolles GG — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#a6ceae',150,0,'gg',null,null),('emote-laugh','emote','Chaos-Lachen','Chaos-Lachen — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#c8a5e9',300,1,'laugh',null,null),('emote-crown','emote','Königlicher Gruß','Königlicher Gruß — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#e6ca93',600,2,'crown',null,null),('skin-relic-0','card','Relikt · Schere','Eine eigene Relikt-Grafik für Schere. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b4a58e',140,0,'relic',0,'relic'),('skin-relic-1','card','Relikt · Stein','Eine eigene Relikt-Grafik für Stein. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b4a58e',160,0,'relic',1,'relic'),('skin-relic-2','card','Relikt · Papier','Eine eigene Relikt-Grafik für Papier. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b4a58e',140,0,'relic',2,'relic'),('skin-relic-3','card','Relikt · Zauberbrunnen','Eine eigene Relikt-Grafik für Zauberbrunnen. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b4a58e',180,0,'relic',3,'relic'),('skin-relic-4','card','Relikt · Erzengel Michael','Eine eigene Relikt-Grafik für Erzengel Michael. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b4a58e',220,0,'relic',4,'relic'),('skin-relic-5','card','Relikt · Himmlischer Colt','Eine eigene Relikt-Grafik für Himmlischer Colt. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b4a58e',160,0,'relic',5,'relic'),('skin-relic-6','card','Relikt · Atombombe','Eine eigene Relikt-Grafik für Atombombe. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b4a58e',180,0,'relic',6,'relic'),('skin-tide-0','card','Gezeiten · Schere','Eine eigene Gezeiten-Grafik für Schere. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#80cde2',280,1,'tide',0,'tide'),('skin-tide-1','card','Gezeiten · Stein','Eine eigene Gezeiten-Grafik für Stein. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#80cde2',300,1,'tide',1,'tide'),('skin-tide-2','card','Gezeiten · Papier','Eine eigene Gezeiten-Grafik für Papier. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#80cde2',280,1,'tide',2,'tide'),('skin-tide-3','card','Gezeiten · Zauberbrunnen','Eine eigene Gezeiten-Grafik für Zauberbrunnen. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#80cde2',320,1,'tide',3,'tide'),('skin-tide-4','card','Gezeiten · Erzengel Michael','Eine eigene Gezeiten-Grafik für Erzengel Michael. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#80cde2',360,1,'tide',4,'tide'),('skin-tide-5','card','Gezeiten · Himmlischer Colt','Eine eigene Gezeiten-Grafik für Himmlischer Colt. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#80cde2',300,1,'tide',5,'tide'),('skin-tide-6','card','Gezeiten · Atombombe','Eine eigene Gezeiten-Grafik für Atombombe. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#80cde2',320,1,'tide',6,'tide'),('skin-thorn-0','card','Dornenbund · Schere','Eine eigene Dornenbund-Grafik für Schere. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b597e3',620,2,'thorn',0,'thorn'),('skin-thorn-1','card','Dornenbund · Stein','Eine eigene Dornenbund-Grafik für Stein. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b597e3',640,2,'thorn',1,'thorn'),('skin-thorn-2','card','Dornenbund · Papier','Eine eigene Dornenbund-Grafik für Papier. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b597e3',620,2,'thorn',2,'thorn'),('skin-thorn-3','card','Dornenbund · Zauberbrunnen','Eine eigene Dornenbund-Grafik für Zauberbrunnen. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b597e3',660,2,'thorn',3,'thorn'),('skin-thorn-4','card','Dornenbund · Erzengel Michael','Eine eigene Dornenbund-Grafik für Erzengel Michael. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b597e3',700,2,'thorn',4,'thorn'),('skin-thorn-5','card','Dornenbund · Himmlischer Colt','Eine eigene Dornenbund-Grafik für Himmlischer Colt. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b597e3',640,2,'thorn',5,'thorn'),('skin-thorn-6','card','Dornenbund · Atombombe','Eine eigene Dornenbund-Grafik für Atombombe. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#b597e3',660,2,'thorn',6,'thorn'),('skin-solar-0','card','Sonnenpakt · Schere','Eine eigene Sonnenpakt-Grafik für Schere. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#e8c88d',1100,3,'solar',0,'solar'),('skin-solar-1','card','Sonnenpakt · Stein','Eine eigene Sonnenpakt-Grafik für Stein. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#e8c88d',1120,3,'solar',1,'solar'),('skin-solar-2','card','Sonnenpakt · Papier','Eine eigene Sonnenpakt-Grafik für Papier. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#e8c88d',1100,3,'solar',2,'solar'),('skin-solar-3','card','Sonnenpakt · Zauberbrunnen','Eine eigene Sonnenpakt-Grafik für Zauberbrunnen. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#e8c88d',1140,3,'solar',3,'solar'),('skin-solar-4','card','Sonnenpakt · Erzengel Michael','Eine eigene Sonnenpakt-Grafik für Erzengel Michael. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#e8c88d',1180,3,'solar',4,'solar'),('skin-solar-5','card','Sonnenpakt · Himmlischer Colt','Eine eigene Sonnenpakt-Grafik für Himmlischer Colt. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#e8c88d',1120,3,'solar',5,'solar'),('skin-solar-6','card','Sonnenpakt · Atombombe','Eine eigene Sonnenpakt-Grafik für Atombombe. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#e8c88d',1140,3,'solar',6,'solar'),('skin-prism-0','card','Prismenchaos · Schere','Eine eigene Prismenchaos-Grafik für Schere. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#deb1ef',1900,4,'prism',0,'prism'),('skin-prism-1','card','Prismenchaos · Stein','Eine eigene Prismenchaos-Grafik für Stein. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#deb1ef',1920,4,'prism',1,'prism'),('skin-prism-2','card','Prismenchaos · Papier','Eine eigene Prismenchaos-Grafik für Papier. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#deb1ef',1900,4,'prism',2,'prism'),('skin-prism-3','card','Prismenchaos · Zauberbrunnen','Eine eigene Prismenchaos-Grafik für Zauberbrunnen. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#deb1ef',1940,4,'prism',3,'prism'),('skin-prism-4','card','Prismenchaos · Erzengel Michael','Eine eigene Prismenchaos-Grafik für Erzengel Michael. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#deb1ef',1980,4,'prism',4,'prism'),('skin-prism-5','card','Prismenchaos · Himmlischer Colt','Eine eigene Prismenchaos-Grafik für Himmlischer Colt. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#deb1ef',1920,4,'prism',5,'prism'),('skin-prism-6','card','Prismenchaos · Atombombe','Eine eigene Prismenchaos-Grafik für Atombombe. Nur diese Macht erhält den Skin. Das Balancing bleibt gleich.','#deb1ef',1940,4,'prism',6,'prism'),('card-aura-shimmer','card-aura','Schimmer','Schimmer — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#b7bcc9',160,0,'glow',null,null),('card-aura-orbit','card-aura','Astralorbit','Astralorbit — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#89bfe8',320,1,'orbit',null,null),('card-aura-sigil','card-aura','Runenkreis','Runenkreis — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#b49de6',580,2,'sigil',null,null),('card-aura-flare','card-aura','Feuersaum','Feuersaum — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#e8c88d',950,3,'flare',null,null),('card-aura-nebula','card-aura','Nebelschleier','Nebelschleier — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#dfb0ef',1500,4,'nebula',null,null),('attack-flash','attack','Klingenblitz','Klingenblitz — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#b7bcc9',160,0,'flash',null,null),('attack-pulse','attack','Astralstoß','Astralstoß — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#89bfe8',320,1,'pulse',null,null),('attack-rift','attack','Dimensionsriss','Dimensionsriss — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#b49de6',580,2,'rift',null,null),('attack-meteor','attack','Sternenregen','Sternenregen — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#e8c88d',950,3,'meteor',null,null),('attack-nova','attack','Chaosnova','Chaosnova — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#dfb0ef',1500,4,'nova',null,null),('victory-dust','victory','Goldstaub','Goldstaub — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#b7bcc9',160,0,'confetti',null,null),('victory-laurel','victory','Lorbeerlicht','Lorbeerlicht — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#89bfe8',320,1,'laurel',null,null),('victory-bloom','victory','Runenblüte','Runenblüte — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#b49de6',580,2,'bloom',null,null),('victory-seraph','victory','Seraphenflug','Seraphenflug — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#e8c88d',950,3,'wings',null,null),('victory-prism','victory','Prismensupernova','Prismensupernova — ein eigener Fantasy-Style. Rein kosmetisch, ohne Kampfbonus.','#dfb0ef',1500,4,'nova',null,null);
+
+
+-- 016_equipment.sql
+
+alter table chaos_private.styles drop constraint styles_slot_check;
+alter table chaos_private.styles add check(slot in('outfit','hat','aura','frame','card','weapon','emote','card-aura','attack','victory'));
+alter table chaos_private.styles drop constraint styles_rarity_check;
+alter table chaos_private.styles add check(rarity between 0 and 4);
+alter table chaos_private.styles add column power_index integer check(power_index between 0 and 6);
+insert into chaos_private.styles(id,slot,price,rarity,power_index) select id,slot,price,rarity,power_index from chaos_private.cosmetic_catalog;
+alter table public.chaos_profiles add column card_loadouts jsonb not null default '{}';
+alter table public.chaos_profiles drop constraint chaos_profiles_frame_check;
+alter table public.chaos_profiles add check(length(frame) between 1 and 80);
+do $$declare definition text;begin
+ definition:=pg_get_functiondef('chaos_private.chaos_style_v6(text,jsonb,text)'::regprocedure);
+ if position('elsif k in (''outfit'',''hat'',''aura'')' in definition)=0 then raise exception 'Unexpected appearance engine';end if;
+ definition:=replace(definition,'k in (''outfit'',''hat'',''aura'')','k in (''outfit'',''hat'',''aura'',''weapon'',''emote'',''victory'')');
+ definition:=replace(definition,'v is distinct from p.appearance->>k','v is distinct from coalesce(p.appearance->>k,case when k=''outfit'' then ''starter'' else ''none'' end)');execute definition;
+end;$$;
+alter function public.chaos_style(text,jsonb,text) rename to chaos_style_v7;
+alter function public.chaos_style_v7(text,jsonb,text) set schema chaos_private;
+revoke all on function chaos_private.chaos_style_v7(text,jsonb,text) from public,anon,authenticated;
+create function public.chaos_style(action text,appearance jsonb default null,item_id text default null) returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();s chaos_private.styles;p public.chaos_profiles;k text;
+begin
+ if action='equip' then
+  select * into s from chaos_private.styles where id=item_id;
+  if item_id in('weapon:reset','emote:reset','victory:reset') then
+   k:=split_part(item_id,':',1);update public.chaos_profiles set appearance=jsonb_set(public.chaos_profiles.appearance,array[k],'"none"') where id=u;return public.chaos_social('state');
+  elsif s.slot in('weapon','emote','victory') then
+   select * into p from public.chaos_profiles where id=u for update;
+   if not exists(select 1 from chaos_private.inventory where player=u and item=s.id) then raise exception 'Diesen Style besitzt du nicht';end if;
+   update public.chaos_profiles set appearance=jsonb_set(public.chaos_profiles.appearance,array[s.slot],to_jsonb(s.id)) where id=u;return public.chaos_social('state');
+  elsif s.slot in('card-aura','attack') or(s.slot='card' and s.power_index is not null) then raise exception 'Bitte bei der gewünschten Macht in der Sammlung ausrüsten';end if;
+ end if;
+ return chaos_private.chaos_style_v7(action,appearance,item_id);
+end;$$;
+revoke all on function public.chaos_style(text,jsonb,text) from public,anon;
+grant execute on function public.chaos_style(text,jsonb,text) to authenticated;
+create function public.chaos_collection(action text,power_index integer default null,slot text default null,item_id text default null) returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();p public.chaos_profiles;s chaos_private.styles;entry jsonb;expected_slot text;
+begin
+ select * into p from public.chaos_profiles where id=u for update;if p.id is null then raise exception 'Bitte zuerst dein Profil einrichten';end if;
+ if action='equip' then
+  if power_index is null or power_index not between 0 and 6 or slot is null or slot not in('skin','aura','effect') then raise exception 'Ungültige Macht oder Ausrüstungsart';end if;
+  if item_id is null then raise exception 'Style fehlt';end if;
+  if item_id not in('classic','none') then
+   select * into s from chaos_private.styles where id=item_id;
+   expected_slot:=case slot when 'skin' then 'card' when 'aura' then 'card-aura' else 'attack' end;
+   if s.id is null or s.slot<>expected_slot or(s.power_index is not null and s.power_index<>power_index) or not exists(select 1 from chaos_private.inventory where player=u and item=s.id) then raise exception 'Dieser Style ist für diese Macht nicht freigeschaltet';end if;
+  elsif (slot='skin' and item_id<>'classic')or(slot<>'skin' and item_id<>'none') then raise exception 'Ungültiger Standardstyle';end if;
+  entry:=coalesce(p.card_loadouts->power_index::text,'{}'::jsonb)||jsonb_build_object(slot,item_id);
+  update public.chaos_profiles set card_loadouts=jsonb_set(card_loadouts,array[power_index::text],entry) where id=u;
+ elsif action<>'state' then raise exception 'Ungültige Sammlungsaktion';end if;
+ return public.chaos_social('state');
+end;$$;
+revoke all on function public.chaos_collection(text,integer,text,text) from public,anon;
+grant execute on function public.chaos_collection(text,integer,text,text) to authenticated;
+alter function chaos_private.life_snapshot(public.chaos_rooms,uuid) rename to life_snapshot_v14;
+create function chaos_private.life_snapshot(r public.chaos_rooms,u uuid) returns jsonb language plpgsql set search_path='' as $$
+declare d jsonb;begin
+ d:=chaos_private.life_snapshot_v14(r,u);
+ d:=jsonb_set(d,'{players,host,card_loadouts}',coalesce((select card_loadouts from public.chaos_profiles where id=r.host),'{}'::jsonb));
+ d:=jsonb_set(d,'{players,guest,card_loadouts}',coalesce((select card_loadouts from public.chaos_profiles where id=r.guest),'{}'::jsonb));
+ return d;
+end;$$;
+revoke all on function chaos_private.life_snapshot(public.chaos_rooms,uuid) from public,anon,authenticated;
+
+
+-- 017_shop.sql
+
+create table chaos_private.shop_receipts(id uuid primary key,player uuid not null references public.chaos_profiles on delete cascade,item text not null references chaos_private.styles,price integer not null check(price>0),created_at timestamptz not null default clock_timestamp());
+alter table chaos_private.shop_receipts enable row level security;
+revoke all on chaos_private.shop_receipts from public,anon,authenticated;
+create index shop_receipts_player on chaos_private.shop_receipts(player,created_at desc);
+create function chaos_private.store_price(item text,base integer) returns integer language sql volatile set search_path='' as $$
+ select case when exists(select 1 from chaos_private.cosmetic_catalog where id=item) and get_byte(decode(md5(item||to_char(clock_timestamp() at time zone 'UTC','YYYYMMDD')),'hex'),0)%12=0 then base*4/5 else base end;
+$$;
+revoke all on function chaos_private.store_price(text,integer) from public,anon,authenticated;
+create function public.chaos_store(action text,item_id text default null,quoted_price integer default null,request_id uuid default null) returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();p public.chaos_profiles;s chaos_private.styles;receipt chaos_private.shop_receipts;price integer;
+begin
+ if action='catalog' then
+  return jsonb_build_object('day',to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD'),'items',coalesce((select jsonb_agg(jsonb_build_object('id',catalog_item.id,'price',chaos_private.store_price(catalog_item.id,catalog_item.price),'base_price',catalog_item.price,'popularity',coalesce(owned.n,0))) from chaos_private.styles catalog_item left join(select item,count(*) n from chaos_private.inventory group by item)owned on owned.item=catalog_item.id),'[]'::jsonb));
+ elsif action<>'buy' or action is null then raise exception 'Ungültige Shopaktion';end if;
+ if request_id is null then raise exception 'Kauf-ID fehlt';end if;
+ select * into p from public.chaos_profiles where id=u for update;if p.id is null then raise exception 'Bitte zuerst dein Profil einrichten';end if;
+ select * into receipt from chaos_private.shop_receipts where id=request_id;
+ if receipt.id is not null then
+  if receipt.player<>u or receipt.item is distinct from item_id then raise exception 'Kauf-ID ungültig';end if;
+  return public.chaos_social('state');
+ end if;
+ select * into s from chaos_private.styles where id=item_id;if s.id is null then raise exception 'Gegenstand nicht gefunden';end if;
+ price:=chaos_private.store_price(s.id,s.price);
+ if quoted_price is distinct from price then raise exception 'Das Angebot hat sich geändert. Bitte den Shop aktualisieren';end if;
+ if exists(select 1 from chaos_private.inventory where player=u and item=s.id) then return public.chaos_social('state');end if;
+ if p.coins<price then raise exception 'Nicht genug Chaos Coins';end if;
+ insert into chaos_private.inventory values(u,s.id);update public.chaos_profiles set coins=coins-price where id=u;
+ insert into chaos_private.shop_receipts values(request_id,u,s.id,price,clock_timestamp());
+ return public.chaos_social('state');
+end;$$;
+revoke all on function public.chaos_store(text,text,integer,uuid) from public,anon;
+grant execute on function public.chaos_store(text,text,integer,uuid) to authenticated;
+
+
+-- 018_emotes.sql
+
+alter table public.chaos_rooms add column host_emote text;
+alter table public.chaos_rooms add column guest_emote text;
+alter table public.chaos_rooms add column host_emote_at timestamptz;
+alter table public.chaos_rooms add column guest_emote_at timestamptz;
+create function public.chaos_emote(room_code text,emote_id text) returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();r public.chaos_rooms;last_sent timestamptz;
+begin
+ select * into r from public.chaos_rooms where code=upper(trim(room_code)) for update;
+ if r.id is null or(u<>r.host and u is distinct from r.guest) or r.updated_at<clock_timestamp()-interval '24 hours' then raise exception 'Kein Zugriff auf diesen Raum';end if;
+ if emote_id is null or (emote_id not in('wave','gg') and not exists(select 1 from chaos_private.inventory i join chaos_private.styles s on s.id=i.item where i.player=u and s.slot='emote' and s.id=emote_id)) then raise exception 'Emote nicht freigeschaltet';end if;
+ last_sent:=case when u=r.host then r.host_emote_at else r.guest_emote_at end;
+ if last_sent>clock_timestamp()-interval '3 seconds' then raise exception 'Bitte kurz warten';end if;
+ if u=r.host then update public.chaos_rooms set host_emote=emote_id,host_emote_at=clock_timestamp(),host_seen=clock_timestamp(),updated_at=clock_timestamp() where id=r.id returning * into r;
+ else update public.chaos_rooms set guest_emote=emote_id,guest_emote_at=clock_timestamp(),guest_seen=clock_timestamp(),updated_at=clock_timestamp() where id=r.id returning * into r;end if;
+ return chaos_private.life_snapshot(r,u);
+end;$$;
+revoke all on function public.chaos_emote(text,text) from public,anon;
+grant execute on function public.chaos_emote(text,text) to authenticated;
+
+
+-- 019_packs.sql
+
+alter table chaos_private.packs drop constraint packs_tier_check;
+alter table chaos_private.packs add check(tier between 0 and 3);
+create table chaos_private.pack_rules(tier integer primary key check(tier between 0 and 3),price integer not null check(price>0),weights integer[] not null check(array_length(weights,1)=7 and array_position(weights,null) is null and 0<=all(weights) and weights[1]+weights[2]+weights[3]+weights[4]+weights[5]+weights[6]+weights[7]=10000),coin_min integer not null check(coin_min>0),coin_max integer not null check(coin_max>=coin_min));
+alter table chaos_private.pack_rules enable row level security;
+revoke all on chaos_private.pack_rules from public,anon,authenticated;
+insert into chaos_private.pack_rules values(0,150,array[2000,3500,2000,1800,500,180,20],40,100),(1,400,array[1000,3000,1000,2800,1700,450,50],100,250),(2,900,array[500,2500,0,2000,3000,1800,200],250,700),(3,1800,array[200,1800,0,1000,2500,3500,1000],450,1000);
+create function chaos_private.loot_roll() returns integer language sql volatile set search_path='' as $$select floor(random()*10000)::integer;$$;
+revoke all on function chaos_private.loot_roll() from public,anon,authenticated;
+create or replace function public.chaos_loot(action text,pack_tier integer,request_id uuid) returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();p public.chaos_profiles;receipt chaos_private.loot_receipts;rule chaos_private.pack_rules;roll integer;bucket integer;i integer;threshold integer:=0;draw_rarity integer;s chaos_private.styles;reward jsonb;amount integer;qty integer;
+begin
+ if request_id is null or pack_tier is null or pack_tier not between 0 and 3 then raise exception 'Truhe ungültig';end if;
+ select * into p from public.chaos_profiles where id=u for update;if p.id is null then raise exception 'Bitte zuerst dein Profil einrichten';end if;
+ select * into receipt from chaos_private.loot_receipts where id=request_id;
+ if receipt.id is not null then
+  if receipt.player<>u or receipt.action<>action or receipt.tier<>pack_tier then raise exception 'Anfrage ungültig';end if;
+  return public.chaos_social('state')||jsonb_build_object('loot',receipt.reward);
+ end if;
+ select * into rule from chaos_private.pack_rules where tier=pack_tier;if rule.tier is null then raise exception 'Truhenkonfiguration fehlt';end if;
+ if action='buy' then
+  if p.coins<rule.price then raise exception 'Nicht genug Chaos Coins';end if;
+  update public.chaos_profiles set coins=coins-rule.price where id=u;
+  insert into chaos_private.packs values(u,pack_tier,1) on conflict(player,tier) do update set quantity=chaos_private.packs.quantity+1;
+  reward:=jsonb_build_object('kind','purchased','tier',pack_tier);
+ elsif action='open' then
+  select quantity into qty from chaos_private.packs where player=u and tier=pack_tier for update;
+  if coalesce(qty,0)<1 then raise exception 'Keine Truhe dieser Stufe vorhanden';end if;
+  update chaos_private.packs set quantity=quantity-1 where player=u and tier=pack_tier;
+  roll:=chaos_private.loot_roll();
+  if roll not between 0 and 9999 or roll is null then raise exception 'Ungültiger Zufallswert';end if;
+  for i in 1..7 loop threshold:=threshold+rule.weights[i];if roll<threshold then bucket:=i;exit;end if;end loop;
+  if bucket is null then raise exception 'Truhenwahrscheinlichkeiten ungültig';end if;
+  if bucket=1 then reward:=jsonb_build_object('kind','empty','tier',pack_tier);
+  elsif bucket=2 then
+   amount:=rule.coin_min+floor(random()*(rule.coin_max-rule.coin_min+1))::integer;
+   update public.chaos_profiles set coins=coins+amount where id=u;
+   reward:=jsonb_build_object('kind','coins','coins',amount,'tier',pack_tier);
+  else
+   draw_rarity:=bucket-3;
+   select * into s from chaos_private.styles where rarity=draw_rarity order by random() limit 1;
+   if s.id is null then raise exception 'Für diese Seltenheit fehlt ein Gegenstand';end if;
+   if exists(select 1 from chaos_private.inventory where player=u and item=s.id) then
+    amount:=s.price/5;update public.chaos_profiles set coins=coins+amount where id=u;
+    reward:=jsonb_build_object('kind','duplicate','item',s.id,'coins',amount,'rarity',s.rarity,'tier',pack_tier);
+   else
+    insert into chaos_private.inventory values(u,s.id);
+    reward:=jsonb_build_object('kind','item','item',s.id,'rarity',s.rarity,'tier',pack_tier);
+   end if;
+  end if;
+ else raise exception 'Ungültige Truhenaktion';end if;
+ insert into chaos_private.loot_receipts values(request_id,u,action,pack_tier,reward,clock_timestamp());
+ return public.chaos_social('state')||jsonb_build_object('loot',reward);
+end;$$;
+create function public.chaos_packs() returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=chaos_private.account_uid();
+begin
+ return jsonb_build_object('rules',(select jsonb_agg(jsonb_build_object('tier',tier,'price',price,'weights',weights,'coin_min',coin_min,'coin_max',coin_max) order by tier) from chaos_private.pack_rules),
+ 'history',coalesce((select jsonb_agg(to_jsonb(t)) from(select id,tier,reward,created_at from chaos_private.loot_receipts where player=u and action='open' order by created_at desc limit 30)t),'[]'::jsonb));
+end;$$;
+revoke all on function public.chaos_loot(text,integer,uuid),public.chaos_packs() from public,anon;
+grant execute on function public.chaos_loot(text,integer,uuid),public.chaos_packs() to authenticated;
 
 commit;

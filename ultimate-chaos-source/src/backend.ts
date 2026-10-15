@@ -15,7 +15,9 @@ async function identifyOnce(){
  throw new Error('Bitte zuerst anmelden.');
 }
 export function rpcMessage(error:{code?:string;message:string}){return error.code==='PGRST202'?'Supabase ist erreichbar. Die Spiel-Datenbank muss noch eingerichtet werden.':error.message;}
-export type GameData={room:Room;my_choice:number|null;server_now:string;left?:boolean};
+export type EndlessRun={id:string;wave:number;defeated:number;coins:number;xp:number;hp:number;best:number;new_record:boolean;active:boolean};
+export type EndlessStats={best:number;active:{code:string;wave:number}|null;history:{wave:number;defeated:number;coins:number;xp:number;final_hp:number;created_at:string;finished_at:string|null}[];leaderboard:{id:string;name:string;appearance:import('./appearance').Look;frame:string;xp:number;wave:number}[]};
+export type GameData={endless?:EndlessRun;room:Room;my_choice:number|null;server_now:string;left?:boolean;rewards?:{xp:number;coins:number;total_xp:number};players?:{host:{appearance:import('./appearance').Look|null;frame:string;xp:number;card_skin?:string;card_loadouts?:import('./cosmetics').CardLoadouts};guest:{appearance:import('./appearance').Look|null;frame:string;xp:number;card_skin?:string;card_loadouts?:import('./cosmetics').CardLoadouts}};wallet?:{xp:number;coins:number}};
 export async function action(type:string,code?:string,name?:string,choice?:number,room?:Room){
  if(!supabase)throw new Error('Der Online-Modus ist noch nicht verbunden.');
  const {data,error}=await supabase.rpc('chaos_action',{action:type,room_code:code??null,player_name:name??null,choice:choice??null,expected_round:room?.round_no??null,expected_match:room?.match_no??null});
@@ -23,3 +25,8 @@ export async function action(type:string,code?:string,name?:string,choice?:numbe
  if(data?.error)throw new Error(data.error);
  return data as GameData;
 }
+
+export async function startCampaign(stage:number){if(!supabase)throw new Error("Bitte zuerst anmelden.");const {data,error}=await supabase.rpc("chaos_campaign",{stage});if(error)throw new Error(rpcMessage(error));return data as GameData;}
+
+export async function startEndless(){if(!supabase)throw new Error('Bitte zuerst anmelden.');const {data,error}=await supabase.rpc('chaos_endless',{action:'start'});if(error)throw new Error(rpcMessage(error));return data as GameData;}
+export async function endlessStats(){if(!supabase)throw new Error('Bitte zuerst anmelden.');const {data,error}=await supabase.rpc('chaos_endless',{action:'state'});if(error)throw new Error(rpcMessage(error));return data as EndlessStats;}

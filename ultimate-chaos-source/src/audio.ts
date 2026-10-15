@@ -1,10 +1,13 @@
-let ctx:AudioContext|null=null;let drone:OscillatorNode|null=null;let musicGain:GainNode|null=null;
-export function unlock(){ctx??=new AudioContext();void ctx.resume();}
-export function sound(fighter:number,volume:number){
- if(volume===0)return;unlock();const c=ctx!;const t=c.currentTime;
- const freq=[880,65,420,110,660,240,45][fighter];
- for(let i=0;i<3;i++){const o=c.createOscillator();const g=c.createGain();o.type=fighter===4?'sine':fighter===0?'triangle':'sawtooth';o.frequency.setValueAtTime(freq*(1+i*.5),t);o.frequency.exponentialRampToValueAtTime(Math.max(20,freq*.25),t+1.1);g.gain.setValueAtTime(0,t+i*.09);g.gain.linearRampToValueAtTime(volume*.09,t+.02+i*.09);g.gain.exponentialRampToValueAtTime(.001,t+1.2);o.connect(g).connect(c.destination);o.start(t+i*.09);o.stop(t+1.3);}
- if(fighter===1||fighter===6||fighter===5){const buffer=c.createBuffer(1,c.sampleRate*1.5,c.sampleRate);const d=buffer.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.exp(-i/(c.sampleRate*.3));const s=c.createBufferSource();s.buffer=buffer;const f=c.createBiquadFilter();f.type='lowpass';f.frequency.value=fighter===5?2400:400;const g=c.createGain();g.gain.value=volume*.25;s.connect(f).connect(g).connect(c.destination);s.start();}
-}
-export function tick(volume:number){if(!volume)return;unlock();const c=ctx!,o=c.createOscillator(),g=c.createGain();o.frequency.value=560;g.gain.setValueAtTime(.08*volume,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.12);o.connect(g).connect(c.destination);o.start();o.stop(c.currentTime+.15);}
-export function music(on:boolean,volume:number){if(!on||volume===0){if(musicGain)musicGain.gain.value=0;return;}unlock();if(!drone){drone=ctx!.createOscillator();musicGain=ctx!.createGain();drone.type='sine';drone.frequency.value=82.41;drone.connect(musicGain).connect(ctx!.destination);drone.start();}musicGain!.gain.value=.024*volume;}
+import {preferences} from './preferences';
+let context:AudioContext|null=null;
+const buffers=new Map<string,Promise<AudioBuffer|null>>();
+let soundtrack:HTMLAudioElement|null=null,musicWanted=false,musicVolume=0;
+const playing=new Set<AudioBufferSourceNode>();
+function buffer(name:string){if(!context)return Promise.resolve(null);if(!buffers.has(name)){const c=context;buffers.set(name,fetch(`/audio/${name}.wav`).then(r=>r.ok?r.arrayBuffer():Promise.reject()).then(b=>c.decodeAudioData(b)).catch(()=>null));}return buffers.get(name)!;}
+export function unlock(){try{const Constructor=window.AudioContext??(window as Window&{webkitAudioContext?:typeof AudioContext}).webkitAudioContext;if(!Constructor)return;context??=new Constructor();if(context.state==='suspended')void context.resume().catch(()=>{});void buffer('select');void buffer('tick');if(musicWanted)music(true,musicVolume);}catch{}}
+function play(name:string,volume:number){if(volume<=0||preferences().muted||document.hidden)return;unlock();const c=context;if(!c)return;void buffer(name).then(b=>{if(!b||c.state!=='running'||document.hidden)return;while(playing.size>=6){const oldest=playing.values().next().value;if(!oldest)break;oldest.stop();playing.delete(oldest);}const source=c.createBufferSource(),gain=c.createGain();source.buffer=b;gain.gain.value=Math.min(1,volume)*.7;source.connect(gain).connect(c.destination);playing.add(source);source.onended=()=>{playing.delete(source);source.disconnect();gain.disconnect();};source.start();});}
+export function sound(fighter:number,volume:number){play(`power-${fighter}`,volume);}
+export function tick(volume:number){play('tick',volume*.45);}
+export function cue(kind:'select'|'win'|'lose'|'draw'|'level',volume:number){play(kind,volume);}
+export function music(on:boolean,volume:number){musicWanted=on&&volume>0;musicVolume=volume;if(!musicWanted){soundtrack?.pause();return;}if(!soundtrack){soundtrack=new Audio('/audio/atelier-score.mp3');soundtrack.loop=true;soundtrack.preload='none';}soundtrack.volume=Math.min(.42,volume*.32);if(!document.hidden)void soundtrack.play().catch(()=>{});}
+document.addEventListener('visibilitychange',()=>{if(document.hidden){soundtrack?.pause();for(const source of playing){try{source.stop();}catch{}}playing.clear();}else if(musicWanted)music(true,musicVolume);});

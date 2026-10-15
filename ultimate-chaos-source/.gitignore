@@ -1,0 +1,14 @@
+node_modules
+dist/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+
+.vercel/
+.npm-cache/
+.vercel-cli/
+
+DEVELOPMENT.md
+REQUIREMENTS.txt
+.publish*/

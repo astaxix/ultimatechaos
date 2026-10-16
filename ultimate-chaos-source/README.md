@@ -26,7 +26,7 @@ Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to the project's public cli
 npm test
 npm run build
 ```
-Database integration tests run the actual SQL using PGlite. Development-only visual fixtures are available at `/__visual` and `/__account`; migration inspection is at `/__migration`. These inspection routes are not included in production.
+Database integration tests run the actual SQL using PGlite. Development-only visual fixtures are available at `/__visual`, `/__auth` and `/__account`; migration inspection is at `/__migration`. These inspection routes are not included in production.
 
 ## Database
 For a **fresh** database, run `supabase/setup-fresh.sql`; it aborts if the game is already installed. For an existing database, apply only the missing numbered migration files in order. Migration 002 is an optional scheduled cleanup and requires pg_cron.
@@ -49,6 +49,6 @@ Connect the GitHub repository and use `main` as the production branch. Configure
 ## Artwork
 All game art, music and fonts are served locally. Original generated image prompts and source paths are documented in [ARTWORK.md](ARTWORK.md). The crest, character layers and effects extend the project's native SVG/CSS artwork. Font license files are in `public/fonts`.
 
-Round stakes use only free, nontransferable, nonredeemable game coins. The stake phase lasts ten seconds before each participating round; both ready ends it early. The server reserves the stake, pays 2× on a deliberate round win, refunds draws/abandonment/inactivity and caps stakes by level and daily profit.
+PvP match stakes use only free, nontransferable, nonredeemable game coins. One ten-second stake phase precedes the entire match; both ready ends it early. Campaign, endless and bot matches have no stakes. The server reserves the stake once, settles it after the match, pays 2× for an eligible match win and refunds draws, abandonment or inactivity. Wallet balance and daily profit limit apply; there is no level gate.
 
 Emote loadouts hold five different free or owned reactions. Five are included; additional illustrated emotes are cosmetic shop or mystery-pack rewards.

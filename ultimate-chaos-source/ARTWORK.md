@@ -120,3 +120,11 @@ Prompt: Use case: stylized-concept. Asset type: production background for an exi
 Saved: public/art/arena-throne.webp
 Original: /Users/robin/.codex/generated_images/01a1283c-21db-7962-86fc-87926d7a3533/exec-c4a7bf38-a5f7-496d-a4c4-deeeb0e51b62.png
 Prompt: Use case: stylized-concept. Asset type: production background for an existing premium dark fantasy mobile browser game Ultimate Chaos. Create the throne of chaos, black and gold throne far beyond the dueling circle, eclipse corona and towering fractured gothic pillars. Wide landscape 16:9 composition, frontal fixed camera slightly elevated, architectural depth. Keep a clean empty circular dueling floor across the lower half, with room for two small player characters to be composited left and right by game code. Center must remain readable for timer and card overlays. Rich painterly 3D fantasy game environment art, restrained elegant navy and warm gold visual identity, luminous atmospheric lighting, sharp material detail, cinematic but calm. No people, no cards, no text, no UI, no watermark. Entire image one coherent environment.
+
+
+## Transparent item extraction — 2026-10-15
+Built-in image generation/edit tool, background-extraction. Reused the existing classic and frost atlas designs at 1774 × 887 with true RGBA alpha; original opaque assets retained.
+- public/art/fighters-transparent.webp — source /Users/robin/.codex/generated_images/01a1283c-21db-7962-86fc-87926d7a3533/exec-66bac1ce-75d7-4f31-a778-1b901ef74123.png
+- public/art/frost-transparent.webp — source /Users/robin/.codex/generated_images/01a1283c-21db-7962-86fc-87926d7a3533/exec-5520ab32-4206-4ad7-98e8-d773d0b743b5.png
+Prompt set: remove only the dark navy background and all empty holes; preserve all eight objects, their colors/materials, exact positions, scale and 4×2 atlas layout; retain magic edges as semitransparent alpha; no backdrop or baked checkerboard. Final WebP encoding preserves the alpha channel byte-for-byte.
+All 35 individual new card skins already use transparent RGBA atlases. Classic/frost-derived cards and the coin glyph now use the new transparent assets everywhere. Native SVG emotes have no opaque backing plate.

@@ -6,12 +6,12 @@ A responsive dark fantasy browser game built with React, TypeScript, Vite and Su
 - Eight campaign chapters with distinct opponents, adaptive strategies based only on previous rounds, and bosses with eight or eleven lives.
 - Endless Arena starts with ten lives. Enemy lives increase with the wave, while the player's remaining lives carry over.
 - Real rating-based matchmaking, private rooms, friend challenges, private chat and battle emotes.
-- A detailed character editor, individual seven-card loadouts, 97 cosmetic items, daily server-priced offers, four chest tiers, opening history and duplicate conversion.
+- A detailed character editor, individual eight-card loadouts, 97 cosmetic items, daily server-priced offers, four chest tiers, opening history and duplicate conversion.
 - Daily quests, permanent achievements and a private match journal. Old account balances and progression are retained; detailed journal statistics begin with the journal migration.
 - Music and effects have separate volume controls. Graphics always use High quality; reduced motion remains available.
 - Installable PWA with local app icons. Online match documents, API responses and authentication are never stored by the service worker. Offline navigation shows a connection screen.
 
-Cosmetics never change the seven-power rule matrix. Currency is earned in game, with no real-money purchases or cash-out.
+Cosmetics never change the eight-power rule matrix. Currency is earned in game, with no real-money purchases or cash-out.
 
 ## Development
 Use Node.js 24, then:
@@ -52,3 +52,5 @@ All game art, music and fonts are served locally. Original generated image promp
 PvP match stakes use only free, nontransferable, nonredeemable game coins. One ten-second stake phase precedes the entire match; both ready ends it early. Campaign, endless and bot matches have no stakes. The server reserves the stake once, settles it after the match, pays 2× for an eligible match win and refunds draws, abandonment or inactivity. Wallet balance and daily profit limit apply; there is no level gate.
 
 Emote loadouts hold five different free or owned reactions. Five are included; additional illustrated emotes are cosmetic shop or mystery-pack rewards.
+
+Eight-card balance: each power beats three, loses to three, and draws with one distinct power. Equal choices also draw. The original scissors–rock–paper triangle stays intact. In-progress seven-card matches retain their original rules; new matches use eight powers after migration 024. The demonic sniper is free to every player.

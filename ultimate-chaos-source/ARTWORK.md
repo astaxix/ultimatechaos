@@ -128,3 +128,6 @@ Built-in image generation/edit tool, background-extraction. Reused the existing 
 - public/art/frost-transparent.webp — source /Users/robin/.codex/generated_images/01a1283c-21db-7962-86fc-87926d7a3533/exec-5520ab32-4206-4ad7-98e8-d773d0b743b5.png
 Prompt set: remove only the dark navy background and all empty holes; preserve all eight objects, their colors/materials, exact positions, scale and 4×2 atlas layout; retain magic edges as semitransparent alpha; no backdrop or baked checkerboard. Final WebP encoding preserves the alpha channel byte-for-byte.
 All 35 individual new card skins already use transparent RGBA atlases. Classic/frost-derived cards and the coin glyph now use the new transparent assets everywhere. Native SVG emotes have no opaque backing plate.
+
+## Dämonische Sniper (2026-10-16)
+Built-in image generation, transparent background. Original: /Users/robin/.codex/generated_images/01a1283c-21db-7962-86fc-87926d7a3533/exec-8779b7f8-20da-4bde-9b40-3724bb692590.png. Workspace: public/art/demonic-sniper.webp; alpha preserved when encoding WebP. Prompt: isolated ornate long demonic sniper rifle, obsidian metal, gold filigree, crimson ruby scope and restrained flame wisps, diagonal silhouette, no text or frame, transparent alpha.

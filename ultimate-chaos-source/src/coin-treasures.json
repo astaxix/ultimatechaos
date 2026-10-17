@@ -1,0 +1,50 @@
+[
+  {
+    "rare_weight": 800,
+    "mythic_weight": 40,
+    "rare": [
+      300,
+      650
+    ],
+    "mythic": [
+      2500,
+      5000
+    ]
+  },
+  {
+    "rare_weight": 1200,
+    "mythic_weight": 80,
+    "rare": [
+      700,
+      1400
+    ],
+    "mythic": [
+      5000,
+      9000
+    ]
+  },
+  {
+    "rare_weight": 1800,
+    "mythic_weight": 150,
+    "rare": [
+      1600,
+      3200
+    ],
+    "mythic": [
+      10000,
+      18000
+    ]
+  },
+  {
+    "rare_weight": 2500,
+    "mythic_weight": 300,
+    "rare": [
+      3500,
+      6500
+    ],
+    "mythic": [
+      20000,
+      35000
+    ]
+  }
+]

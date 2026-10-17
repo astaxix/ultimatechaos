@@ -8,5 +8,8 @@ import React from 'react';import ReactDOM from 'react-dom/client';import Account
 window.addEventListener('vite:preloadError',recoverUpdatedAssets);
 const root=ReactDOM.createRoot(document.getElementById('root')!);
 if(import.meta.env.DEV&&location.pathname==='/__migration'){void import('./MigrationQA').then(({default:MigrationQA})=>root.render(<MigrationQA/>));}
+else if(import.meta.env.DEV&&location.pathname==='/__materials'){void import('./MaterialQA').then(({default:MaterialQA})=>root.render(<MaterialQA/>));}
 else if(import.meta.env.DEV&&location.pathname==='/__visual'){void import('./VisualQA').then(({default:VisualQA})=>root.render(<VisualQA/>));}
 else root.render(<React.StrictMode><PreferencesRuntime/><PwaRuntime/><React.Suspense fallback={<div className="session-loading" role="status">Deine Arena wird geladen …</div>}><GameBoundary><AccountShell/></GameBoundary></React.Suspense></React.StrictMode>);
+
+import './atelier-render.css';

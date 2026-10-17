@@ -145,3 +145,13 @@ Built-in image generation/editing. Original isolated sniper assets with true RGB
 Sources are in the local generated-images session directory. No raster art is embedded into editable avatar anatomy: the four new layered garment designs and refinements to faces, curls, fabric and equipment are original native SVG in `Traveler.tsx` and `WardrobePieces.tsx`. Combat trails, rings and particles are native CSS with reduced-motion support.
 
 Music and SFX: original NumPy synthesis in `scripts/compose_ascension.py`; no third-party music or sampled recordings. Two 48-second scene scores and fourteen short interaction/combat effects. Intermediate WAV files stay outside the public bundle; compressed music and effect files are served locally.
+
+## Atelier material artwork (2026-10-17)
+Generated with the built-in imagegen tool, using the user-provided purple streetwear hero screenshot as an aesthetic reference. New artwork is original and modular; no interface or reference pixels are shipped. Six full transparent sheets were encoded to WebP without resampling, cropping or alpha modifications. `src/avatar-materials.json` records measured source-space component bounds; clipping occurs at runtime.
+- Masculine wardrobe: `exec-fe3a7ab6-e4d8-48dd-b29a-313e68d07800.png`.
+- Feminine wardrobe: `exec-342127ef-e6fe-4394-94ea-4d7604f1dbef.png`.
+- Androgynous wardrobe: `exec-7098b910-ded5-412f-a84d-99ed91277dfe.png`.
+- Sculpted face bases: `exec-e81f5619-5b24-4b60-856a-3ad003257b7c.png`.
+- Hair: `exec-b862a033-3940-43e5-a510-49a5638e28ba.png`.
+- Matching headwear and weapons: `exec-8d3c1f5f-675a-430d-965f-055087879938.png`.
+Native SVG eyes, expressions, face details and custom color treatments preserve character editing. Coin treasure stacks are original native SVG. Music and sound effects are original deterministic synthesis from `scripts/compose_nocturne.py`, without samples. The older score is retained as provenance; the application serves the new Nocturne files.

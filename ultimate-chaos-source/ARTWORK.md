@@ -131,3 +131,17 @@ All 35 individual new card skins already use transparent RGBA atlases. Classic/f
 
 ## Dämonische Sniper (2026-10-16)
 Built-in image generation, transparent background. Original: /Users/robin/.codex/generated_images/01a1283c-21db-7962-86fc-87926d7a3533/exec-8779b7f8-20da-4bde-9b40-3724bb692590.png. Workspace: public/art/demonic-sniper.webp; alpha preserved when encoding WebP. Prompt: isolated ornate long demonic sniper rifle, obsidian metal, gold filigree, crimson ruby scope and restrained flame wisps, diagonal silhouette, no text or frame, transparent alpha.
+
+## Ascension (2026-10-17)
+Built-in image generation/editing. Original isolated sniper assets with true RGBA alpha; WebP conversion retains alpha. All illustrations have interior breathing room and are rendered with `object-fit: contain`.
+
+- `demonic-sniper-v2.webp`: source `exec-6e2bdd82-7e76-4f0b-912a-b2dc81c1de5e.png`. Edit of the existing red demonic rifle: recompose the entire weapon nearly horizontally, stock and muzzle fully visible, generous clear border, transparent background.
+- `sniper-frost.webp`: source `exec-fd4ded7b-b4d3-4552-8e04-22fcc181547a.png`. Ornate silver dragon ice rifle, cyan crystal scope, frost energy, whole weapon isolated.
+- `sniper-seraph.webp`: source `exec-cdb28d99-6fb0-4c28-98c6-52aafbf37ed3.png`. Ivory, gold and navy celestial rifle, sapphire scope, sculpted wing receiver, whole weapon isolated.
+- `sniper-jade.webp`: source `exec-e3b66b35-b6a7-4207-8f31-6099f2a01a15.png`. Emerald dragon rifle, gold ornamental hardware, crystal accents, whole weapon isolated.
+- `sniper-void.webp`: source `exec-1ad99501-0d6a-462c-b309-3db0a16790ef.png`. Obsidian and amethyst rifle, broken halo, restrained void energy, whole weapon isolated.
+- `arena-ascension.webp`: source `exec-26c3c1ee-f526-4c60-897f-080229128d25.png`. Wide painterly fantasy fortress, obsidian and gold dueling platforms, distant blue eclipse portal, atmospheric mist; empty foreground for two live characters and readable overlays.
+
+Sources are in the local generated-images session directory. No raster art is embedded into editable avatar anatomy: the four new layered garment designs and refinements to faces, curls, fabric and equipment are original native SVG in `Traveler.tsx` and `WardrobePieces.tsx`. Combat trails, rings and particles are native CSS with reduced-motion support.
+
+Music and SFX: original NumPy synthesis in `scripts/compose_ascension.py`; no third-party music or sampled recordings. Two 48-second scene scores and fourteen short interaction/combat effects. Intermediate WAV files stay outside the public bundle; compressed music and effect files are served locally.

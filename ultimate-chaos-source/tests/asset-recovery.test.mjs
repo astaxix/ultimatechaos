@@ -1,0 +1,7 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import ts from 'typescript';
+const js=ts.transpileModule(await readFile('src/GameBoundary.tsx','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,jsx:ts.JsxEmit.ReactJSX}}).outputText.replace(/from ["'](react(?:\/jsx-runtime)?)["']/g,(_,name)=>`from '${import.meta.resolve(name)}'`);
+const {recoverUpdatedAssets}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+test('a missing deployment chunk reloads once, prevents retry loops and handles unavailable session storage',()=>{const values=new Map();let reloads=0;globalThis.location={reload(){reloads++;}};globalThis.sessionStorage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value)};try{const first=new Event('vite:preloadError',{cancelable:true});recoverUpdatedAssets(first);assert.equal(first.defaultPrevented,true);assert.equal(reloads,1);const repeated=new Event('vite:preloadError',{cancelable:true});recoverUpdatedAssets(repeated);assert.equal(repeated.defaultPrevented,true);assert.equal(reloads,1);globalThis.sessionStorage={getItem(){throw Error('Storage disabled');}};const blocked=new Event('vite:preloadError',{cancelable:true});assert.doesNotThrow(()=>recoverUpdatedAssets(blocked));assert.equal(blocked.defaultPrevented,true);assert.equal(reloads,1);}finally{delete globalThis.location;delete globalThis.sessionStorage;}});

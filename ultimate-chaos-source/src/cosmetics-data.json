@@ -968,5 +968,93 @@
     "rarity": 4,
     "color": "#eccb8f",
     "description": "Das letzte Wort fällt auf den Arenaboden."
+  },
+  {
+    "id": "skin-sniper-frost",
+    "slot": "card",
+    "name": "Frostjäger",
+    "description": "Frostjäger — eigenes Sniper-Design. Rein kosmetisch, gleiche Kampfregeln.",
+    "color": "#83d9f6",
+    "price": 320,
+    "rarity": 1,
+    "model": "sniper",
+    "power": 7,
+    "theme": "sniper-frost"
+  },
+  {
+    "id": "skin-sniper-jade",
+    "slot": "card",
+    "name": "Jadedrache",
+    "description": "Jadedrache — eigenes Sniper-Design. Rein kosmetisch, gleiche Kampfregeln.",
+    "color": "#7be2b4",
+    "price": 650,
+    "rarity": 2,
+    "model": "sniper",
+    "power": 7,
+    "theme": "sniper-jade"
+  },
+  {
+    "id": "skin-sniper-seraph",
+    "slot": "card",
+    "name": "Seraphenschuss",
+    "description": "Seraphenschuss — eigenes Sniper-Design. Rein kosmetisch, gleiche Kampfregeln.",
+    "color": "#f2d693",
+    "price": 1100,
+    "rarity": 3,
+    "model": "sniper",
+    "power": 7,
+    "theme": "sniper-seraph"
+  },
+  {
+    "id": "skin-sniper-void",
+    "slot": "card",
+    "name": "Leerenjäger",
+    "description": "Leerenjäger — eigenes Sniper-Design. Rein kosmetisch, gleiche Kampfregeln.",
+    "color": "#c6a1f3",
+    "price": 1900,
+    "rarity": 4,
+    "model": "sniper",
+    "power": 7,
+    "theme": "sniper-void"
+  },
+  {
+    "id": "outfit-asc-paladin",
+    "slot": "outfit",
+    "name": "Solaris-Wache",
+    "description": "Solaris-Wache — neue Silhouette mit eigener Rüstung und Stoffdetails. Rein kosmetisch.",
+    "color": "#d5b67a",
+    "price": 950,
+    "rarity": 3,
+    "model": "paladin"
+  },
+  {
+    "id": "outfit-asc-ronin",
+    "slot": "outfit",
+    "name": "Schattenronin",
+    "description": "Schattenronin — neue Silhouette mit eigener Rüstung und Stoffdetails. Rein kosmetisch.",
+    "color": "#944b60",
+    "price": 850,
+    "rarity": 3,
+    "model": "ronin"
+  },
+  {
+    "id": "outfit-asc-astral",
+    "slot": "outfit",
+    "name": "Astralweber",
+    "description": "Astralweber — neue Silhouette mit eigener Rüstung und Stoffdetails. Rein kosmetisch.",
+    "color": "#6795ba",
+    "price": 750,
+    "rarity": 2,
+    "model": "astral"
+  },
+  {
+    "id": "outfit-asc-specter",
+    "slot": "outfit",
+    "name": "Nachtklinge",
+    "description": "Nachtklinge — neue Silhouette mit eigener Rüstung und Stoffdetails. Rein kosmetisch.",
+    "color": "#6b8b88",
+    "price": 1400,
+    "rarity": 4,
+    "model": "specter"
   }
 ]

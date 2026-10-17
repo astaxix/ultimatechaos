@@ -1,5 +1,5 @@
 export const arenas=[
- {id:'temple',name:'Himmlischer Tempel',image:'/art/arena-premium.webp',color:'#e9c98c'},
+ {id:'temple',name:'Himmlischer Tempel',image:'/art/arena-ascension.webp',color:'#e9c98c'},
  {id:'shadow',name:'Schattenfestung',image:'/art/arena-shadow.webp',color:'#b995e9'},
  {id:'crystal',name:'Kristallpalast',image:'/art/arena-crystal.webp',color:'#93d5ed'},
  {id:'volcano',name:'Vulkanarena',image:'/art/arena-volcano.webp',color:'#ef9675'},

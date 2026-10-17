@@ -1,3 +1,6 @@
+import {useEffect} from 'react';
+import {setMusicScene} from './audio';
+import {CombatAtmosphere} from './CombatAtmosphere';
 import {arenaFor} from './arenas';
 import {cardLook} from './cosmetics';import {CosmeticEffect} from './CosmeticArtwork';
 import {DialogFocus} from './DialogFocus';
@@ -9,6 +12,7 @@ import {fighters,quip,type Room} from './game';import {level,type Profile} from 
 const botLook:Look={...defaultLook,body:'androgynous',skin:'#aeccdd',hair:'crop',hairColor:'#e1eaf4',eyes:'#74eaff',outfit:'coat-nocturne',hat:'hat-halo',aura:'aura-frost'};
 type Props={room:Room;host:boolean;uid:string;ownName:string;otherName:string;ownProfile?:Profile;players?:GameData['players'];selected:number|null;myChoice:number|null;remaining:number;selectionLeft:number;selectOpen:boolean;result:boolean;revealed:boolean;settled:boolean;nextIn:number;pending:boolean;ready:boolean;rewards?:GameData['rewards'];effect?:ReactNode;onChoose:(n:number)=>void;onReady:()=>void;onNext?:()=>void;endless?:GameData['endless'];onLeave?:()=>void;onConfirm?:()=>void;impactLanded?:boolean};
 export function DuelStage(p:Props){
+ useEffect(()=>{setMusicScene('battle');return()=>setMusicScene('lobby');},[]);
  const {room,host,uid,ownName,otherName,ownProfile,players,selected,myChoice,remaining,selectionLeft,selectOpen,result,revealed,settled,nextIn,pending,ready,rewards}=p;
  const arena=arenaFor(room.campaign_stage,room.game_mode==='endless'?room.endless_wave:null,room.code);
  const own=players?.[host?'host':'guest'],other=players?.[host?'guest':'host'],ownLook=own?.appearance??ownProfile?.appearance;
@@ -41,6 +45,7 @@ export function DuelStage(p:Props){
    <div className="arena-trainer trainer-own"><Traveler key={room.match_no+'-'+room.round_no} look={ownLook} pose={finished?(won?"victory":"defeat"):ownHit&&impact?"hurt":"battle"} label={'Trainer '+ownName}/><span>{ownName}</span></div>
    <div className="arena-trainer trainer-other"><Traveler key={room.match_no+'-'+room.round_no} look={otherLook} pose={finished?(won?"defeat":"victory"):otherHit&&impact?"hurt":"battle"} label={'Trainer '+otherName}/><span>{otherName}</span></div>
    <div className="duel-powers"><Power index={ownMove} skin={ownMove!==null?cardLook(ownLoadouts,ownMove,ownSkin).skin:ownSkin} aura={ownMove!==null?cardLook(ownLoadouts,ownMove,ownSkin).aura:'none'} caption={!revealed?'Deine Macht':'Deine Aktion'} hidden={!result&&selected===null}/><span className="duel-versus">VS</span><Power index={otherMove} skin={otherMove!==null?cardLook(otherLoadouts,otherMove,otherSkin).skin:otherSkin} aura={otherMove!==null?cardLook(otherLoadouts,otherMove,otherSkin).aura:'none'} caption={!revealed?'Geheime Wahl':'Gegnerische Aktion'} hidden={!revealed}/></div>
+   {!finished&&revealed&&impact&&damage&&<CombatAtmosphere key={'strike-'+room.match_no+'-'+room.round_no} side={ownHit?'own':'other'} color={fighters[winnerPower??0]?.color??'#efcb8b'} power={winnerPower??0}/>}
    {!finished&&revealed&&impact&&damage&&<div key={'damage-'+room.match_no+'-'+room.round_no} className={'damage-callout '+(ownHit?'hit-own':'hit-other')} aria-hidden="true"><strong>−1</strong><Heart size={24} fill="currentColor"/></div>}
    {revealed&&p.effect}{revealed&&impact&&damage&&<CosmeticEffect key={room.match_no+'-'+room.round_no} id={winnerEffect}/>} {finished&&won&&<CosmeticEffect key={room.match_no} id={ownLook?.victory} kind="victory"/>}
    <div className="arena-verdict" aria-live="polite"><h2>{status}</h2><p>{result&&settled?quip(room.host_choice,room.guest_choice,room.round_no,room.power_count??7):result?'Gleichzeitige Enthüllung. Gleiche Chancen.':lives?(confirmed?'Deine Auswahl ist verbindlich.':'Karte wählen, dann Bereit. Oder bis Timerende ändern.'):'Tippe eine Karte. Du kannst bis zum Timerende wechseln.'}</p></div>

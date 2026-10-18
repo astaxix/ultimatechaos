@@ -1136,5 +1136,105 @@
     "color": "#c6a3e7",
     "model": "grimoire",
     "description": "Astral-Grimoire · neue detaillierte Materialien und eigene Silhouette. Rein kosmetischer Style für deinen Charakter, ohne zusätzliche Kampfwirkung."
+  },
+  {
+    "id": "outfit-resonance-velvet",
+    "slot": "outfit",
+    "name": "Mitternachtsamt",
+    "model": "umbra",
+    "color": "#514478",
+    "rarity": 2,
+    "price": 850,
+    "description": "Resonanz-Kollektion · ausgearbeitete Material-Farbvariante. Rein kosmetisch."
+  },
+  {
+    "id": "outfit-resonance-jade",
+    "slot": "outfit",
+    "name": "Jadewächter",
+    "model": "archon",
+    "color": "#438f83",
+    "rarity": 3,
+    "price": 1350,
+    "description": "Resonanz-Kollektion · ausgearbeitete Material-Farbvariante. Rein kosmetisch."
+  },
+  {
+    "id": "outfit-resonance-ivory",
+    "slot": "outfit",
+    "name": "Elfenbein-Regent",
+    "model": "monarch",
+    "color": "#ded2b4",
+    "rarity": 4,
+    "price": 2000,
+    "description": "Resonanz-Kollektion · ausgearbeitete Material-Farbvariante. Rein kosmetisch."
+  },
+  {
+    "id": "outfit-resonance-rose",
+    "slot": "outfit",
+    "name": "Rosengarde",
+    "model": "duelist",
+    "color": "#a25c7d",
+    "rarity": 2,
+    "price": 750,
+    "description": "Resonanz-Kollektion · ausgearbeitete Material-Farbvariante. Rein kosmetisch."
+  },
+  {
+    "id": "outfit-resonance-cobalt",
+    "slot": "outfit",
+    "name": "Kobaltklinge",
+    "model": "ronin",
+    "color": "#396fa9",
+    "rarity": 3,
+    "price": 1150,
+    "description": "Resonanz-Kollektion · ausgearbeitete Material-Farbvariante. Rein kosmetisch."
+  },
+  {
+    "id": "outfit-resonance-ember",
+    "slot": "outfit",
+    "name": "Glutwanderer",
+    "model": "mistblade",
+    "color": "#b27a4f",
+    "rarity": 3,
+    "price": 1200,
+    "description": "Resonanz-Kollektion · ausgearbeitete Material-Farbvariante. Rein kosmetisch."
+  },
+  {
+    "id": "weapon-resonance-jade",
+    "slot": "weapon",
+    "name": "Jadesichel",
+    "model": "scythe",
+    "color": "#6fd6b4",
+    "rarity": 3,
+    "price": 1100,
+    "description": "Resonanz-Kollektion · edle Material-Farbvariante. Rein kosmetisch."
+  },
+  {
+    "id": "weapon-resonance-ivory",
+    "slot": "weapon",
+    "name": "Elfenbein-Lanze",
+    "model": "spear",
+    "color": "#eadbb5",
+    "rarity": 2,
+    "price": 850,
+    "description": "Resonanz-Kollektion · edle Material-Farbvariante. Rein kosmetisch."
+  },
+  {
+    "id": "weapon-resonance-rose",
+    "slot": "weapon",
+    "name": "Rosendämmerung",
+    "model": "twins",
+    "color": "#d39bb9",
+    "rarity": 3,
+    "price": 1250,
+    "description": "Resonanz-Kollektion · edle Material-Farbvariante. Rein kosmetisch."
+  },
+  {
+    "id": "weapon-resonance-cobalt",
+    "slot": "weapon",
+    "name": "Kodex der Tiefe",
+    "model": "grimoire",
+    "color": "#74b9e5",
+    "rarity": 4,
+    "price": 1800,
+    "description": "Resonanz-Kollektion · edle Material-Farbvariante. Rein kosmetisch."
   }
 ]

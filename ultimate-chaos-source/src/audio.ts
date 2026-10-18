@@ -11,8 +11,8 @@ function play(name:string,volume:number){if(volume<=0||preferences().muted||docu
 export function sound(fighter:number,volume:number){if(fighter<0||fighter>7)return;duckUntil=performance.now()+750;envelope();play(`power-${fighter}`,volume);}
 export function tick(volume:number){play('tick',volume*.3);}
 export function cue(kind:'select'|'win'|'lose'|'draw'|'level',volume:number){play(kind,volume);}
-export function setMusicScene(next:'lobby'|'battle'){if(next===scene)return;scene=next;if(soundtrack){const outgoing=soundtrack;soundtrack=null;let value=outgoing.volume;const id=window.setInterval(()=>{value=Math.max(0,value-.025);outgoing.volume=value;if(value===0){outgoing.pause();outgoing.removeAttribute('src');window.clearInterval(id);}},45);}if(musicWanted)music(true,musicVolume);}
-export function music(on:boolean,volume:number){musicWanted=on&&volume>0;musicVolume=volume;if(!musicWanted){if(soundtrack){soundtrack.pause();soundtrack.volume=0;}return;}if(!unlocked||document.hidden||preferences().muted)return;if(!soundtrack){soundtrack=new Audio(`/audio/nocturne-${scene}.m4a`);soundtrack.loop=true;soundtrack.preload='none';soundtrack.volume=0;}void soundtrack.play().catch(()=>{});envelope();}
+export function setMusicScene(next:'lobby'|'battle'){if(next===scene)return;scene=next;envelope();}
+export function music(on:boolean,volume:number){musicWanted=on&&volume>0;musicVolume=volume;if(!musicWanted){if(soundtrack){soundtrack.pause();soundtrack.volume=0;}return;}if(!soundtrack){soundtrack=new Audio('/audio/resonance-lounge.m4a');soundtrack.loop=true;soundtrack.preload='auto';soundtrack.volume=0;}if(!unlocked||document.hidden||preferences().muted)return;void soundtrack.play().catch(()=>{});envelope();}
 document.addEventListener('visibilitychange',()=>{if(document.hidden){soundtrack?.pause();for(const source of playing){try{source.stop();}catch{}}playing.clear();}else if(musicWanted)music(true,musicVolume);});
 
 const firstGesture=()=>{if(!preferences().muted)unlock();};

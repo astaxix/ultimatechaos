@@ -1,4 +1,4 @@
-const CACHE='ultimate-chaos-static-v1';
+const CACHE='ultimate-chaos-static-v2';
 const SHELL=['/offline.html','/icons/icon-192.png','/icons/icon-512.png','/favicon.svg'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)));});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('ultimate-chaos-static-')&&key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim()));});
@@ -13,5 +13,5 @@ self.addEventListener('fetch',event=>{
   event.respondWith(fetch(request).catch(async()=>await caches.match('/offline.html')||Response.error()));return;
  }
  if(/^\/assets\/[^/]+-[\w-]+\.(js|css)$/.test(url.pathname))event.respondWith(caches.match(request).then(hit=>hit||fetch(request).then(response=>remember(request,response))));
- else if(/^\/(art|fonts|icons)\//.test(url.pathname))event.respondWith(fetch(request).then(response=>remember(request,response)).catch(async()=>await caches.match(request)||Response.error()));
+ else if(/^\/(art|fonts|icons)\//.test(url.pathname)){const update=fetch(request).then(response=>remember(request,response));event.waitUntil(update.catch(()=>{}));event.respondWith(caches.match(request).then(hit=>hit||update).catch(()=>Response.error()));}
 });

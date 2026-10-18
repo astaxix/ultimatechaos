@@ -1,0 +1,10 @@
+[
+{"id":"potion","name":"Heiltrank","rarity":0,"price":60,"art":0,"color":"#f19a9e","description":"Heilt 1 Leben und blockt diese Runde direkten Schaden und Brennen. Joker durchbricht den Schutz."},
+{"id":"elixir","name":"Großer Heiltrank","rarity":1,"price":120,"art":1,"color":"#8ee6b4","description":"Heilt 2 Leben und blockt diese Runde Schaden. Heilt höchstens bis zu deinen maximalen Leben. Joker durchbricht den Schutz."},
+{"id":"joker","name":"Chaos-Joker","rarity":4,"price":600,"art":2,"color":"#d3adef","description":"Gewinnt die Runde, verursacht 1 unabwehrbaren Schaden und schützt dich diese Runde. Zwei Joker ergeben ein Unentschieden. Maximal 1 pro Match."},
+{"id":"fireball","name":"Feuerball","rarity":2,"price":200,"art":3,"color":"#f2ae78","description":"50 % Chance, einen ungeschützten Gegner anzuzünden: je 1 Schaden in den nächsten 3 Runden. Erneutes Entzünden erneuert die Dauer, stapelt sie nicht."},
+{"id":"frost","name":"Frostbombe","rarity":1,"price":140,"art":4,"color":"#96dff8","description":"50 % Chance auf 2 direkten Schaden. Ohne Treffer kein Schaden. Schutz und Joker können den Angriff abwehren."},
+{"id":"antidote","name":"Gegengift","rarity":0,"price":70,"art":5,"color":"#bca4ed","description":"Entfernt Brennen sofort und heilt 1 Leben. Blockt keinen normalen Angriff."},
+{"id":"barrier","name":"Sternenbarriere","rarity":2,"price":220,"art":6,"color":"#ebd48e","description":"Blockt Schaden und neue Verbrennungen in dieser und der nächsten Runde. Joker durchbricht den Schutz."},
+{"id":"mirror","name":"Spiegelsiegel","rarity":3,"price":350,"art":7,"color":"#c3b0f1","description":"Blockt diese Runde Schaden. Ein direkter Treffer wirft 1 Schaden zurück, sofern der Gegner ungeschützt ist. Wirkt nicht gegen Joker."}
+]

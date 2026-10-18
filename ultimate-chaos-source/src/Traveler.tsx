@@ -14,7 +14,7 @@ export function Traveler({look,portrait=false,pose='idle',label='Dein Charakter'
  return <div className={`traveler ${portrait?'traveler-portrait':''} pose-${pose} aura-${a.aura} aura-shape-${auraItem?.model??'standard'}`} style={{'--aura-color':aura,'--traveler-height':height} as React.CSSProperties}>
   {!portrait&&a.aura!=='none'&&<div className="traveler-aura"><i/><i/><i/><i/><i/><i/><i/><i/></div>}
   {!portrait&&auraItem?.model==='wings'&&<svg className="aura-wings" viewBox="0 0 260 440" aria-hidden="true"><path d="M130 180Q67 84 14 139L40 184 22 203 82 238 126 210M130 180Q193 84 246 139L220 184 238 203 178 238 134 210" fill="var(--aura-color)" fillOpacity=".14" stroke="var(--aura-color)" strokeOpacity=".6"/></svg>}
-  <svg viewBox={portrait?(a.hat==='none'&&!['afro','bun','mohawk','topknot','high-pony'].includes(a.hair)?'94 24 72 88':'76 -2 108 122'):'0 0 260 440'} role="img" aria-label={label} className="traveler-art">
+  <svg viewBox={portrait?(a.hat==='none'&&!['afro','bun','mohawk','topknot','high-pony'].includes(a.hair)?'90 16 80 104':'70 -8 120 138'):'0 0 260 440'} role="img" aria-label={label} className="traveler-art">
    <defs>
     <linearGradient id={`${id}-skin`} x1="0" x2="1" y2=".7"><stop stopColor={a.skin}/><stop offset=".32" stopColor={a.skin}/><stop offset=".7" stopColor={a.skin} stopOpacity=".91"/><stop offset="1" stopColor="#3b2834" stopOpacity=".9"/></linearGradient>
     <linearGradient id={`${id}-cloth`} x1="0" x2="1"><stop stopColor="#091423"/><stop offset=".16" stopColor={cloth}/><stop offset=".4" stopColor={cloth}/><stop offset=".56" stopColor={cloth} stopOpacity=".82"/><stop offset=".78" stopColor={cloth}/><stop offset="1" stopColor="#080e1b"/></linearGradient>

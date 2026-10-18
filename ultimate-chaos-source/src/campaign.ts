@@ -15,4 +15,5 @@ export const packTiers=[
  {id:1,name:'Epische Truhe',tag:'EPISCH',price:400,color:'#b4a0ed',odds:[10,30,10,28,17,4.5,.5],coins:[100,250]},
  {id:2,name:'Legendäre Truhe',tag:'LEGENDÄR',price:900,color:'#eac879',odds:[5,25,0,20,30,18,2],coins:[250,700]},
  {id:3,name:'Himmlische Truhe',tag:'HIMMLISCH',price:1800,color:'#d7b2ee',odds:[2,18,0,10,25,35,10],coins:[450,1000]},
+ {id:4,name:'Arkanum-Truhe',tag:'ARSENAL',price:650,color:'#b9a1e0',odds:[0,0,35,30,20,10,5],coins:[0,0]},
 ] as const;

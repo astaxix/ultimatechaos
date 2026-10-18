@@ -1056,5 +1056,85 @@
     "price": 1400,
     "rarity": 4,
     "model": "specter"
+  },
+  {
+    "id": "outfit-umbra-drift",
+    "slot": "outfit",
+    "name": "Umbra Drift",
+    "price": 950,
+    "rarity": 3,
+    "color": "#716195",
+    "model": "umbra",
+    "description": "Umbra Drift · neue detaillierte Materialien und eigene Silhouette. Rein kosmetischer Style für deinen Charakter, ohne zusätzliche Kampfwirkung."
+  },
+  {
+    "id": "outfit-solar-archon",
+    "slot": "outfit",
+    "name": "Sonnenarchon",
+    "price": 1600,
+    "rarity": 4,
+    "color": "#cda965",
+    "model": "archon",
+    "description": "Sonnenarchon · neue detaillierte Materialien und eigene Silhouette. Rein kosmetischer Style für deinen Charakter, ohne zusätzliche Kampfwirkung."
+  },
+  {
+    "id": "outfit-mistblade",
+    "slot": "outfit",
+    "name": "Nebelklinge",
+    "price": 850,
+    "rarity": 2,
+    "color": "#6b9d9c",
+    "model": "mistblade",
+    "description": "Nebelklinge · neue detaillierte Materialien und eigene Silhouette. Rein kosmetischer Style für deinen Charakter, ohne zusätzliche Kampfwirkung."
+  },
+  {
+    "id": "outfit-astral-monarch",
+    "slot": "outfit",
+    "name": "Astral Monarch",
+    "price": 1800,
+    "rarity": 4,
+    "color": "#8b78bc",
+    "model": "monarch",
+    "description": "Astral Monarch · neue detaillierte Materialien und eigene Silhouette. Rein kosmetischer Style für deinen Charakter, ohne zusätzliche Kampfwirkung."
+  },
+  {
+    "id": "weapon-moonreaper",
+    "slot": "weapon",
+    "name": "Mondsichel",
+    "price": 1100,
+    "rarity": 3,
+    "color": "#b4c8e6",
+    "model": "scythe",
+    "description": "Mondsichel · neue detaillierte Materialien und eigene Silhouette. Rein kosmetischer Style für deinen Charakter, ohne zusätzliche Kampfwirkung."
+  },
+  {
+    "id": "weapon-twilight-pair",
+    "slot": "weapon",
+    "name": "Zwielicht-Zwillinge",
+    "price": 950,
+    "rarity": 3,
+    "color": "#b297e0",
+    "model": "twins",
+    "description": "Zwielicht-Zwillinge · neue detaillierte Materialien und eigene Silhouette. Rein kosmetischer Style für deinen Charakter, ohne zusätzliche Kampfwirkung."
+  },
+  {
+    "id": "weapon-star-lance",
+    "slot": "weapon",
+    "name": "Sternenlanze",
+    "price": 800,
+    "rarity": 2,
+    "color": "#88cfd9",
+    "model": "spear",
+    "description": "Sternenlanze · neue detaillierte Materialien und eigene Silhouette. Rein kosmetischer Style für deinen Charakter, ohne zusätzliche Kampfwirkung."
+  },
+  {
+    "id": "weapon-astral-grimoire",
+    "slot": "weapon",
+    "name": "Astral-Grimoire",
+    "price": 1400,
+    "rarity": 4,
+    "color": "#c6a3e7",
+    "model": "grimoire",
+    "description": "Astral-Grimoire · neue detaillierte Materialien und eigene Silhouette. Rein kosmetischer Style für deinen Charakter, ohne zusätzliche Kampfwirkung."
   }
 ]

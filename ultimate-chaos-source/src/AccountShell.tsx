@@ -42,7 +42,7 @@ export default function AccountShell(){
  useEffect(()=>{if(duel)setHubPanel(null);},[Boolean(duel)]);
  const [previewProfile,setPreviewProfile]=useState(debugPreview?{...preview,name:'Aurelia Sternenwanderin',xp:2345,coins:20430}:preview);
  const profile=tour?previewProfile:data.profile;
- useEffect(()=>{if(!profile)return;rememberCharacterBody(profile.appearance);let alive=true;void warmCharacterAssets(profile.appearance).then(()=>{if(alive)void warmOpponentAssets();});return()=>{alive=false;};},[profile?.id,profile?.appearance?.body,profile?.appearance?.hair,profile?.appearance?.hat,profile?.appearance?.weapon]);
+ useEffect(()=>{if(!profile)return;rememberCharacterBody(profile.appearance);let alive=true;void warmCharacterAssets(profile.appearance).then(()=>{if(alive)void warmOpponentAssets();});return()=>{alive=false;};},[profile?.id,profile?.appearance?.outfit,profile?.appearance?.body,profile?.appearance?.hair,profile?.appearance?.hat,profile?.appearance?.weapon]);
  const journal=useJournal(tour?undefined:profile?.id,Boolean(duel),setData);
  const community=useCommunity(user&&data.profile?user.id:undefined);const [chatFriend,setChatFriend]=useState<CommunityFriend|null>(null);
  useEffect(()=>{window.scrollTo({top:0,behavior:'auto'});setError('');setNotice('');},[view,tour,Boolean(duel),profile?.id]);
@@ -106,7 +106,7 @@ export default function AccountShell(){
  view==='endless'?<><button className="route-back" onClick={()=>setView('battle')}><ChevronLeft size={17}/> Zur Lobby</button><EndlessHub profile={profile} busy={busy} preview={tour} onStart={()=>void launchEndless()}/></>:
  view==='friends'?<FriendsHub profile={profile} data={community.data} error={community.error} busy={busy} onAction={mutate} onChat={setChatFriend} onRefresh={community.refresh}/>:
  view==='campaign'?<><button className="route-back" onClick={()=>setView('battle')}><ChevronLeft size={17}/> Zur Lobby</button><CampaignMap records={journal.data?.chapters} profile={profile} busy={busy} onStart={stage=>void launchCampaign(stage)}/></>:
- (view==='shop'||view==='inventory')?<CollectionHub key={view} profile={profile} inventory={data.inventory} packs={data.packs??{}} busy={busy} collection={view==='inventory'} preview={tour} onStyle={shopAction} onLoot={packAction} onCard={cardAction} onPurchase={storePurchase} onEmotes={emoteAction}/>:
+ (view==='shop'||view==='inventory')?<CollectionHub onItemsState={setData} key={view} profile={profile} inventory={data.inventory} packs={data.packs??{}} busy={busy} collection={view==='inventory'} preview={tour} onStyle={shopAction} onLoot={packAction} onCard={cardAction} onPurchase={storePurchase} onEmotes={emoteAction}/>:
 
  <ProfileHub profile={profile} friends={friends.length} items={data.inventory.length} busy={busy} journal={journal} onSave={saveProfile} onLogout={()=>void logout()}/>}
 

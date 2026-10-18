@@ -81,3 +81,21 @@ Items are bought with earned coins or found in packs. Arkanum costs 650 coins an
 
 ### Command Arena responsive HUD
 `battle-command.css` scopes the new battlefield to active matches. On mobile, the app uses the available dynamic viewport with safe-area padding. The arena fills the remaining space after a compact header, opponent status, own health, item control, eight-card deck and ready button. Short viewports compact secondary labels; no battle controls are placed beneath a fixed floating button. Desktop retains a wide eight-card command row. Game resolution, item consumption and reward rules are unchanged. Development preview: `/__visual?command`, `?command&endless`, `?command&result`.
+
+### Wallet, gift codes and admin
+`/admin` requires a fresh Supabase email/password login and a server-side entry in `chaos_private.coin_admins`. The admin client keeps its session in memory and does not replace the player's saved game session. There is no hardcoded password, service-role key or client-side admin allowlist. An installation owner must explicitly authorize and provision its own verified account using a privileged database session:
+
+```sql
+insert into chaos_private.coin_admins(player)
+select id from auth.users where lower(email)=lower('YOUR_VERIFIED_ADMIN_EMAIL')
+  and email_confirmed_at is not null and not coalesce(is_anonymous,false)
+on conflict do nothing;
+```
+
+Gift codes have ten cryptographically random characters, contain 1–100,000 coins, expire in 90 days, redeem once, and support revocation. Invalid redemption attempts are rate limited per account. Creation is request-idempotent. Codes and admin membership are private under RLS; credits and code consumption happen in one database transaction. `tests/live-wallet-smoke.sql` validates temporary identities and rolls back all writes.
+
+The coin packages are a clearly labeled preview. Checkout always fails without recording payment details or charging money. Activating real payments requires a future payment provider integration, server-verified webhooks, a transaction ledger and store/legal review; no client switch can enable payment processing.
+
+New-item markers use server-side versioned discoveries. Acknowledging an old version never clears a reward acquired concurrently. Packs wait for image decode before animating, use lightweight loot previews, and reuse decoded assets. First-party art uses stale-while-revalidate static caching; authentication, game requests and media ranges are never cached by the worker.
+
+Rapid card changes use a serialized latest-intent queue. Intermediate clicks are coalesced, the newest choice stays visible while saving, and Ready waits for its server acknowledgement. Changing round or leaving cancels unsent choices; old responses cannot reopen the room or overwrite a newer selection.

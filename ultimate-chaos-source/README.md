@@ -71,3 +71,10 @@ Migration `026_coin_treasures.sql` adds rare and mythic coin prizes inside the e
 
 ## Character loading (2026-10-18)
 The primary battle lobby is included in the initial application bundle and stays mounted, hidden from layout and keyboard navigation while another account tab is active. Returning to Kämpfen reuses the existing character DOM. A bounded, shared image-preparation cache keeps decoded avatar sheets referenced across navigation, coalesces concurrent loads, retries failed requests and starts with the last selected body hint during authentication. Once the current character is ready, the other two body sheets warm at low priority for opponents. Preparation failures do not block login. Existing appearance, skin ownership and game rules are unchanged.
+
+### Arkanum and combat items
+Apply `027_battle_items.sql`, then `028_arsenal_packs.sql` to existing installations. New installations use `setup-fresh.sql`. Existing active rooms retain their original rules. New campaign, endless and private matches allow up to three consumables per match, with one Joker maximum; ranked matches disable items. Selecting an item replaces the card, confirming locks the turn, and stock is consumed only on resolution. Card selection cancels an unconfirmed item. Starter inventory is granted exactly once.
+
+Items are bought with earned coins or found in packs. Arkanum costs 650 coins and guarantees 3–5 of one consumable; rarity weights are displayed in the shop. Other packs have a 20% consumable share within their cosmetic rarity buckets (9%, 12%, 14%, 16% overall respectively). Consumables stack rather than convert into duplicate coins. Existing cosmetic duplicate conversion and coin jackpots remain unchanged.
+
+`tests/battle-items.test.mjs` exercises actual RPCs, private selection, purchase/open idempotency, stock consumption, use limits, protection/healing/burn, ranked restrictions and legacy rooms. `tests/live-arsenal-smoke.sql` uses a generated identity inside a rolled-back transaction.

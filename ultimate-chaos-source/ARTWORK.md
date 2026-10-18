@@ -155,3 +155,13 @@ Generated with the built-in imagegen tool, using the user-provided purple street
 - Hair: `exec-b862a033-3940-43e5-a510-49a5638e28ba.png`.
 - Matching headwear and weapons: `exec-8d3c1f5f-675a-430d-965f-055087879938.png`.
 Native SVG eyes, expressions, face details and custom color treatments preserve character editing. Coin treasure stacks are original native SVG. Music and sound effects are original deterministic synthesis from `scripts/compose_nocturne.py`, without samples. The older score is retained as provenance; the application serves the new Nocturne files.
+
+## Arkanum / consumable arsenal (2026-10-18)
+Created with the built-in ImageGen tool, true RGBA alpha backgrounds. Original PNGs are retained in the local generation library; shipped WebP encodings preserve alpha, with no pixel edits. Sprite rectangles are read-only alpha component bounds, used as source clips by `MaterialPart`; assets are never stretched.
+
+- `public/art/arsenal-items.webp`: 4×2 sheet. Prompt: premium fantasy tactical consumables, small red healing potion, large green elixir, purple/gold joker card, fireball; blue frost bomb, violet antidote, gold/blue shield, silver/violet mirror. Eight distinct isolated objects, consistent three-quarter lighting, detailed metal and glass, true transparent background, no words, no UI.
+- `public/art/arsenal-weapons.webp`: 2×2 sheet. Prompt: original premium fantasy game equipment, moon scythe, crossed twilight twin blades, star lance, floating astral grimoire. Detailed neutral/grayscale metal ready for material tinting, isolated, consistent lighting, generous separation, transparent background, no scenery or words.
+- `public/art/arsenal-body-{masculine,feminine}.webp` and `arsenal-androgynous.webp`: 2×2 modular headless wardrobe sheets for each body type. Prompt: detailed stylized game character clothing, front view, relaxed standing pose, complete boots and hands, neck socket for separate head, neutral grayscale materials. Umbra cropped technical jacket and cargo pants; solar lion armor and tabard; asymmetric mistblade long coat; crystalline monarch mage coat. Match existing rendered avatar proportions, isolated silhouettes, generous separation, true transparent background, no heads, no text.
+- `public/art/arsenal-box.webp`: Prompt: one premium fantasy alchemist chest in deep midnight blue and gold, crystal vials, violet gem lock, slightly open, detailed metalwork, true alpha background, no scenery, no words or UI.
+
+All new cosmetics are visual only. Consumable mechanics are separate server-controlled game actions; their artwork does not alter the eight-card matchup rules.

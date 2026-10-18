@@ -165,3 +165,6 @@ Created with the built-in ImageGen tool, true RGBA alpha backgrounds. Original P
 - `public/art/arsenal-box.webp`: Prompt: one premium fantasy alchemist chest in deep midnight blue and gold, crystal vials, violet gem lock, slightly open, detailed metalwork, true alpha background, no scenery, no words or UI.
 
 All new cosmetics are visual only. Consumable mechanics are separate server-controlled game actions; their artwork does not alter the eight-card matchup rules.
+
+## Command Arena (2026-10-18)
+`public/art/arena-command-celestial.webp` is a new original ImageGen environment, encoded from the unchanged generated PNG `exec-960d77c0-54f2-4ffd-94c1-a6eb78088d65.png` retained in the local generation library. Prompt: spectacular cinematic fantasy dueling terrace above clouds; colossal eclipsed sun and distant gothic citadel; polished black basalt with fine brushed-gold circular inlays; obsidian arch pillars, sapphire mountains, physically believable warm/cool lighting; broad clear lower floor for two characters. Landscape 16:9 with a near-square center safe for mobile; no characters, creatures, weapons, interface, lettering or particle storms. Source 1672×941. WebP quality93, no cropping or pixel edits. Used for the celestial arena and lobby background. Other themed arenas remain available.
